@@ -49,12 +49,14 @@ static size_t Config_fs_read(struct file *file, char *buf, size_t size, loff_t *
 #if defined(KERNEL_HAS_KERNEL_READ)
    readRes = kernel_read(file, buf, size, pos);
 #else
+#ifdef set_fs
    mm_segment_t oldfs;
    ACQUIRE_PROCESS_CONTEXT(oldfs);
-
+#endif
    readRes = vfs_read(file, buf, size, pos);
-
+#ifdef set_fs
    RELEASE_PROCESS_CONTEXT(oldfs);
+#endif
 #endif
 
    return readRes;
@@ -752,10 +754,13 @@ bool __Config_loadFromFile(struct Config* this, const char* filename)
 
    // clean up
    kfree(line);
-
+#ifdef set_fs
    ACQUIRE_PROCESS_CONTEXT(oldfs);
+#endif
    filp_close(cfgFile, NULL);
+#ifdef set_fs
    RELEASE_PROCESS_CONTEXT(oldfs);
+#endif
 
    return retVal;
 }
@@ -818,10 +823,13 @@ bool Config_loadStringListFile(const char* filename, StrCpyList* outList)
 
    // clean up
    kfree(line);
-
+#ifdef set_fs
    ACQUIRE_PROCESS_CONTEXT(oldfs);
+#endif
    filp_close(listFile, NULL);
+#ifdef set_fs
    RELEASE_PROCESS_CONTEXT(oldfs);
+#endif
 
    return retVal;
 }
@@ -1162,19 +1170,25 @@ bool __Config_initConnAuthHash(Config* this, char* connAuthFile, uint64_t* outCo
    if(unlikely(!buf) )
    {
       printk_fhgfs(KERN_WARNING, "Failed to alloc mem for auth file reading: '%s'\n", connAuthFile);
-
+#ifdef set_fs
       ACQUIRE_PROCESS_CONTEXT(oldfs);
+#endif
       filp_close(fileHandle, NULL);
+#ifdef set_fs
       RELEASE_PROCESS_CONTEXT(oldfs);
+#endif
 
       return false;
    }
 
    readRes = Config_fs_read(fileHandle, buf, CONFIG_AUTHFILE_READSIZE, &fileHandle->f_pos);
-
+#ifdef set_fs
    ACQUIRE_PROCESS_CONTEXT(oldfs);
+#endif
    filp_close(fileHandle, NULL);
+#ifdef set_fs
    RELEASE_PROCESS_CONTEXT(oldfs);
+#endif
 
 
    if(readRes < 0)

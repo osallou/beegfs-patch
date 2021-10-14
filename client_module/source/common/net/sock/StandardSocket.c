@@ -25,9 +25,9 @@ static const struct SocketOps standardOps = {
 };
 
 #ifdef KERNEL_HAS_SKWQ_HAS_SLEEPER
-# define __sock_has_sleeper(wq) (skwq_has_sleeper(wq))
+# define __sock_has_sleeper(wq) (skwq_has_sleeper(&wq->wait))
 #else
-# define __sock_has_sleeper(wq) (wq_has_sleeper(wq))
+# define __sock_has_sleeper(wq) (wq_has_sleeper(&wq->wait))
 #endif
 
 #if defined(KERNEL_HAS_SK_SLEEP) && !defined(KERNEL_HAS_SK_HAS_SLEEPER)
@@ -38,7 +38,7 @@ static inline int sk_has_sleeper(struct sock* sk)
 #endif
 
 #ifndef __wake_up_sync_key
-# define __wake_up_sync_key(wq, state, n, key) __wake_up_sync(wq, state, n)
+# define __wake_up_sync_key(wq, state, n, key) __wake_up_sync(wq, state)
 #endif
 
 /* unlike linux sock_def_readable, this will also wake TASK_KILLABLE threads. we need this
@@ -241,22 +241,24 @@ void __StandardSocket_setAllocMode(StandardSocket* this, gfp_t flags)
  * @return 0 on success, error code otherwise (=> different from userspace version)
  */
 int _StandardSocket_setsockopt(StandardSocket* this, int level,
-   int optname, char* optval, int optlen)
+   int optname, sockptr_t optval, int optlen)
 {
    int retVal = -EINVAL;
    mm_segment_t oldfs;
 
    if(optlen < 0)
       return retVal;
-
+#ifdef set_fs
    ACQUIRE_PROCESS_CONTEXT(oldfs);
+#endif
 
    if (level == SOL_SOCKET)
       retVal = sock_setsockopt(this->sock, level, optname, optval, optlen);
    else
       retVal = this->sock->ops->setsockopt(this->sock, level, optname, optval, optlen);
-
+#ifdef set_fs
    RELEASE_PROCESS_CONTEXT(oldfs);
+#endif
 
    return retVal;
 }
@@ -278,9 +280,9 @@ int _StandardSocket_getsockopt(StandardSocket* this, int level, int optname,
 
    if(*optlen < 0)
       return retVal;
-
+#ifdef set_fs
    ACQUIRE_PROCESS_CONTEXT(oldfs);
-
+#endif
    // note: sock_getsockopt() is not exported to modules
 
    if(level == SOL_SOCKET)
@@ -305,8 +307,9 @@ int _StandardSocket_getsockopt(StandardSocket* this, int level, int optname,
    }
    else
       retVal = this->sock->ops->getsockopt(this->sock, level, optname, optval, optlen);
-
+#ifdef set_fs
    RELEASE_PROCESS_CONTEXT(oldfs);
+#endif
 
    return retVal;
 }
@@ -318,7 +321,7 @@ bool StandardSocket_setSoKeepAlive(StandardSocket* this, bool enable)
    int setRes = _StandardSocket_setsockopt(this,
       SOL_SOCKET,
       SO_KEEPALIVE,
-      (char*)&keepAliveVal,
+      (sockptr_t){.kernel = &keepAliveVal},
       sizeof(keepAliveVal) );
 
    if(setRes != 0)
@@ -334,7 +337,7 @@ bool StandardSocket_setSoBroadcast(StandardSocket* this, bool enable)
    int setRes = _StandardSocket_setsockopt(this,
       SOL_SOCKET,
       SO_BROADCAST,
-      (char*)&broadcastVal,
+      (sockptr_t){.kernel = &broadcastVal},
       sizeof(broadcastVal) );
 
    if(setRes != 0)
@@ -390,7 +393,7 @@ bool StandardSocket_setSoRcvBuf(StandardSocket* this, int size)
    setRes = _StandardSocket_setsockopt(this,
       SOL_SOCKET,
       SO_RCVBUF,
-      (char*)&halfSize,
+      (sockptr_t){.kernel = &halfSize},
       sizeof(halfSize) );
 
    if(setRes)
@@ -409,7 +412,7 @@ bool StandardSocket_setTcpNoDelay(StandardSocket* this, bool enable)
    int noDelayRes = _StandardSocket_setsockopt(this,
       IPPROTO_TCP,
       TCP_NODELAY,
-      (char*)&noDelayVal,
+      (sockptr_t){.kernel = &noDelayVal},
       sizeof(noDelayVal) );
 
    if(noDelayRes != 0)
@@ -425,7 +428,7 @@ bool StandardSocket_setTcpCork(StandardSocket* this, bool enable)
    int setRes = _StandardSocket_setsockopt(this,
       SOL_TCP,
       TCP_CORK,
-      (char*)&corkVal,
+      (sockptr_t){.kernel = &corkVal},
       sizeof(corkVal) );
 
    if(setRes != 0)
@@ -457,16 +460,17 @@ bool _StandardSocket_connectByIP(Socket* this, struct in_addr* ipaddress, unsign
       .sin_port = htons(port),
    };
 
-
+#ifdef set_fs
    ACQUIRE_PROCESS_CONTEXT(oldfs);
-
+#endif
    connRes = thisCast->sock->ops->connect(
       thisCast->sock,
       (struct sockaddr*) &serveraddr,
       sizeof(serveraddr),
       O_NONBLOCK); // non-blocking connect
-
+#ifdef set_fs
    RELEASE_PROCESS_CONTEXT(oldfs);
+#endif
 
    if(connRes)
    {
@@ -580,12 +584,14 @@ bool _StandardSocket_shutdown(Socket* this)
 
    int sendshutRes;
    mm_segment_t oldfs;
-
+#ifdef set_fs
    ACQUIRE_PROCESS_CONTEXT(oldfs);
+#endif
 
    sendshutRes = thisCast->sock->ops->shutdown(thisCast->sock, SEND_SHUTDOWN);
-
+#ifdef set_fs
    RELEASE_PROCESS_CONTEXT(oldfs);
+#endif
 
    if( (sendshutRes < 0) && (sendshutRes != -ENOTCONN) )
    {
@@ -606,16 +612,18 @@ bool _StandardSocket_shutdownAndRecvDisconnect(Socket* this, int timeoutMS)
    shutRes = this->ops->shutdown(this);
    if(!shutRes)
       return false;
-
+#ifdef set_fs
    ACQUIRE_PROCESS_CONTEXT(oldfs);
+#endif
 
    // receive until shutdown arrives
    do
    {
       recvRes = Socket_recvT(this, buf, SOCKET_SHUTDOWN_RECV_BUF_LEN, 0, timeoutMS);
    } while(recvRes > 0);
-
+#ifdef set_fs
    RELEASE_PROCESS_CONTEXT(oldfs);
+#endif
 
    if(recvRes &&
       (recvRes != -ECONNRESET) )
@@ -674,16 +682,18 @@ ssize_t _StandardSocket_sendto(Socket* this, struct iov_iter* iter, int flags,
       toSockAddr.sin_addr = to->addr;
       toSockAddr.sin_port = to->port;
    }
-
+#ifdef set_fs
    ACQUIRE_PROCESS_CONTEXT(oldfs);
+#endif
 
 #ifndef KERNEL_HAS_SOCK_SENDMSG_NOLEN
    sendRes = sock_sendmsg(thisCast->sock, &msg, len);
 #else
    sendRes = sock_sendmsg(thisCast->sock, &msg);
 #endif
-
+#ifdef set_fs
    RELEASE_PROCESS_CONTEXT(oldfs);
+#endif
 
    if(sendRes >= 0)
       iov_iter_advance(iter, sendRes);
@@ -719,16 +729,18 @@ ssize_t StandardSocket_recvfrom(StandardSocket* this, struct iov_iter* iter, int
    msg.msg_iter = *iter;
    len = iter->count;
 #endif // LINUX_VERSION_CODE
-
+#ifdef set_fs
    ACQUIRE_PROCESS_CONTEXT(oldfs);
+#endif
 
 #ifdef KERNEL_HAS_RECVMSG_SIZE
    recvRes = sock_recvmsg(this->sock, &msg, len, flags);
 #else
    recvRes = sock_recvmsg(this->sock, &msg, flags);
 #endif
-
+#ifdef set_fs
    RELEASE_PROCESS_CONTEXT(oldfs);
+#endif
 
    if(recvRes > 0)
       iov_iter_advance(iter, recvRes);

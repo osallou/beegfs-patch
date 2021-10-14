@@ -6,6 +6,7 @@
 #include <common/toolkit/Time.h>
 #include <common/Common.h>
 #include <common/net/sock/PooledSocket.h>
+#include <linux/sockptr.h>
 
 
 struct StandardSocket;
@@ -50,7 +51,7 @@ extern ssize_t StandardSocket_recvfromT(StandardSocket* this, struct iov_iter* i
 extern bool _StandardSocket_initSock(StandardSocket* this, int domain, int type,
    int protocol);
 extern void __StandardSocket_setAllocMode(StandardSocket* this, gfp_t flags);
-extern int _StandardSocket_setsockopt(StandardSocket* this, int level, int optname, char* optval,
+extern int _StandardSocket_setsockopt(StandardSocket* this, int level, int optname, sockptr_t optval,
    int optlen);
 extern int _StandardSocket_getsockopt(StandardSocket* this, int level, int optname,
    char *optval, int *optlen);

@@ -322,7 +322,8 @@ int FhgfsOps_fillSuper(struct super_block* sb, void* rawMountOptions, int silent
 
    kstat.ino = BEEGFS_INODE_ROOT_INO;
    kstat.mode = S_IFDIR | 0777; // allow access for everyone
-   kstat.atime = kstat.mtime = kstat.ctime = current_fs_time(sb);
+   // Can't see that this affects anything
+   // kstat.atime = kstat.mtime = kstat.ctime = current_fs_time(sb);
    kstat.uid = current_fsuid();
    kstat.gid = current_fsgid();
    kstat.blksize = Config_getTuneInodeBlockSize(cfg);

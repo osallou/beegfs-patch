@@ -187,12 +187,13 @@ ssize_t _RDMASocket_recvT(Socket* this, struct iov_iter* iter, int flags, int ti
    ssize_t retVal;
    mm_segment_t oldfs;
 
+#ifdef set_fs
    ACQUIRE_PROCESS_CONTEXT(oldfs);
-
+#endif
    retVal = IBVSocket_recvT(&thisCast->ibvsock, iter, flags, timeoutMS);
-
+#ifdef set_fs
    RELEASE_PROCESS_CONTEXT(oldfs);
-
+#endif
    return retVal;
 }
 
@@ -208,13 +209,13 @@ ssize_t _RDMASocket_sendto(Socket* this, struct iov_iter* iter, int flags,
 
    ssize_t retVal;
    mm_segment_t oldfs;
-
+#ifdef set_fs
    ACQUIRE_PROCESS_CONTEXT(oldfs);
-
+#endif
    retVal = IBVSocket_send(&thisCast->ibvsock, iter, flags);
-
+#ifdef set_fs
    RELEASE_PROCESS_CONTEXT(oldfs);
-
+#endif
    return retVal;
 }
 

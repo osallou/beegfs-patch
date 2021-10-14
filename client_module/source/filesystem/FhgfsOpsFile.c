@@ -1144,12 +1144,11 @@ static ssize_t FhgfsOps_buffered_read_iter(struct kiocb *iocb, struct iov_iter *
    {
       struct iovec iov;
       struct iov_iter iter = *to;
-
+#ifdef set_fs
       mm_segment_t segment = get_fs();
-
       if (to->type & ITER_KVEC)
          set_fs(KERNEL_DS);
-
+#endif
       if (iter.count > (2<<30))
          iter.count = 2<<30;
 
@@ -1171,9 +1170,10 @@ static ssize_t FhgfsOps_buffered_read_iter(struct kiocb *iocb, struct iov_iter *
          if (readRes < iov.iov_len)
             break;
       }
-
+#ifdef set_fs
       if (to->type & ITER_KVEC)
          set_fs(segment);
+#endif
    }
    else
    {
@@ -1512,12 +1512,12 @@ static ssize_t FhgfsOps_buffered_write_iter(struct kiocb *iocb, struct iov_iter 
    {
       struct iovec iov;
       struct iov_iter iter = *from;
-
+#ifdef set_fs
       mm_segment_t segment = get_fs();
 
       if (from->type & ITER_KVEC)
          set_fs(KERNEL_DS);
-
+#endif
       if (iter.count > (2<<30))
          iter.count = 2<<30;
 
@@ -1539,9 +1539,10 @@ static ssize_t FhgfsOps_buffered_write_iter(struct kiocb *iocb, struct iov_iter 
          if (writeRes < iov.iov_len)
             break;
       }
-
+#ifdef set_fs
       if (from->type & ITER_KVEC)
          set_fs(segment);
+#endif
    }
    else
    {
