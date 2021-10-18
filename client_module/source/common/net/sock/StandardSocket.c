@@ -3,8 +3,10 @@
 #include <common/toolkit/SocketTk.h>
 #include <common/Common.h>
 
+
 #include <linux/in.h>
 #include <linux/tcp.h>
+#include <linux/socket.h>
 
 
 #define SOCKET_LISTEN_BACKLOG                32
@@ -665,6 +667,11 @@ ssize_t _StandardSocket_sendto(Socket* this, struct iov_iter* iter, int flags,
       .msg_namelen      = sizeof(toSockAddr),
    };
 
+   // OSALLOU
+   //struct iovec iov = iov_iter_iovec(iter);
+   //iov_iter_init(&msg.msg_iter, WRITE, &iov, 1, 1);
+   //len = 1;
+
 #ifndef KERNEL_HAS_MSGHDR_ITER
    struct iovec iov = iov_iter_iovec(iter);
 
@@ -676,15 +683,22 @@ ssize_t _StandardSocket_sendto(Socket* this, struct iov_iter* iter, int flags,
    len = iter->count;
 #endif // LINUX_VERSION_CODE
 
+
    if(to)
    {
       toSockAddr.sin_family = thisCast->sockDomain;
       toSockAddr.sin_addr = to->addr;
       toSockAddr.sin_port = to->port;
+      // OSALLOU move address to kernel
+      //struct sockaddr_storage kaddr;
+      //copy_to_user(&kaddr, msg.msg_name, msg.msg_namelen);
+      //msg.msg_name = &kaddr;
    }
+
 #ifdef set_fs
    ACQUIRE_PROCESS_CONTEXT(oldfs);
 #endif
+oldfs = force_uaccess_begin();
 
 #ifndef KERNEL_HAS_SOCK_SENDMSG_NOLEN
    sendRes = sock_sendmsg(thisCast->sock, &msg, len);
@@ -694,6 +708,7 @@ ssize_t _StandardSocket_sendto(Socket* this, struct iov_iter* iter, int flags,
 #ifdef set_fs
    RELEASE_PROCESS_CONTEXT(oldfs);
 #endif
+force_uaccess_end(oldfs);
 
    if(sendRes >= 0)
       iov_iter_advance(iter, sendRes);

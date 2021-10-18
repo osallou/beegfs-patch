@@ -7,6 +7,7 @@
 #include <common/Common.h>
 #include <common/net/sock/PooledSocket.h>
 #include <linux/sockptr.h>
+#include <linux/socket.h>
 
 
 struct StandardSocket;
