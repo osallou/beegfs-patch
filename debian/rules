@@ -141,3 +141,4 @@ override_dh_installinit:
 	#
 	dh_installinit -pbeegfs-client        --no-restart-on-upgrade --no-start -- start 99 2 3 4 5 . stop 99 0 1 6 .
 	dh_installinit -pbeegfs-client-compat --no-restart-on-upgrade --no-start -- start 99 2 3 4 5 . stop 99 0 1 6 .
+
