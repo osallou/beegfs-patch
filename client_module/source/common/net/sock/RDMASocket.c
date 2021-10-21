@@ -185,7 +185,7 @@ ssize_t _RDMASocket_recvT(Socket* this, struct iov_iter* iter, int flags, int ti
    RDMASocket* thisCast = (RDMASocket*)this;
 
    ssize_t retVal;
-   mm_segment_t oldfs;
+   //mm_segment_t oldfs;
 
 #ifdef set_fs
    ACQUIRE_PROCESS_CONTEXT(oldfs);
@@ -208,7 +208,7 @@ ssize_t _RDMASocket_sendto(Socket* this, struct iov_iter* iter, int flags,
    RDMASocket* thisCast = (RDMASocket*)this;
 
    ssize_t retVal;
-   mm_segment_t oldfs;
+   //mm_segment_t oldfs;
 #ifdef set_fs
    ACQUIRE_PROCESS_CONTEXT(oldfs);
 #endif

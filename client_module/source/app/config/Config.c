@@ -709,7 +709,7 @@ bool __Config_loadFromFile(struct Config* this, const char* filename)
    char* line;
    char* trimLine;
    int currentLineNum; // 1-based (just for error logging)
-   mm_segment_t oldfs;
+   //mm_segment_t oldfs;
 
    //printk_fhgfs_debug(KERN_INFO, "Attempting to read config file: '%s'\n", filename);
    cfgFile = filp_open(filename, (O_RDONLY), 0);
@@ -777,7 +777,7 @@ bool Config_loadStringListFile(const char* filename, StrCpyList* outList)
    struct file* listFile;
    char* line;
    char* trimLine;
-   mm_segment_t oldfs;
+   // mm_segment_t oldfs;
 
    //printk_fhgfs(KERN_INFO, "Attempting to read configured list file: '%s'\n", filename);
    listFile = filp_open(filename, (O_RDONLY), 0);
@@ -1144,7 +1144,7 @@ bool __Config_initConnAuthHash(Config* this, char* connAuthFile, uint64_t* outCo
 {
    struct file* fileHandle;
    char* buf;
-   mm_segment_t oldfs;
+   //mm_segment_t oldfs;
    ssize_t readRes;
 
 

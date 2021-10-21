@@ -246,7 +246,7 @@ int _StandardSocket_setsockopt(StandardSocket* this, int level,
    int optname, sockptr_t optval, int optlen)
 {
    int retVal = -EINVAL;
-   mm_segment_t oldfs;
+   //mm_segment_t oldfs;
 
    if(optlen < 0)
       return retVal;
@@ -278,7 +278,7 @@ int _StandardSocket_getsockopt(StandardSocket* this, int level, int optname,
    char* optval, int* optlen)
 {
    int retVal = -EINVAL;
-   mm_segment_t oldfs;
+   //mm_segment_t oldfs;
 
    if(*optlen < 0)
       return retVal;
@@ -452,7 +452,7 @@ bool _StandardSocket_connectByIP(Socket* this, struct in_addr* ipaddress, unsign
 
    StandardSocket* thisCast = (StandardSocket*)this;
 
-   mm_segment_t oldfs;
+   //mm_segment_t oldfs;
    int connRes;
 
    struct sockaddr_in serveraddr =
@@ -585,7 +585,7 @@ bool _StandardSocket_shutdown(Socket* this)
    StandardSocket* thisCast = (StandardSocket*)this;
 
    int sendshutRes;
-   mm_segment_t oldfs;
+   //mm_segment_t oldfs;
 #ifdef set_fs
    ACQUIRE_PROCESS_CONTEXT(oldfs);
 #endif
@@ -609,7 +609,7 @@ bool _StandardSocket_shutdownAndRecvDisconnect(Socket* this, int timeoutMS)
    bool shutRes;
    char buf[SOCKET_SHUTDOWN_RECV_BUF_LEN];
    int recvRes;
-   mm_segment_t oldfs;
+   //mm_segment_t oldfs;
 
    shutRes = this->ops->shutdown(this);
    if(!shutRes)
@@ -654,7 +654,10 @@ ssize_t _StandardSocket_sendto(Socket* this, struct iov_iter* iter, int flags,
 
    int sendRes;
    size_t len;
-   mm_segment_t oldfs;
+
+   struct kvec iov[1];
+
+   //mm_segment_t oldfs;
 
    struct sockaddr_in toSockAddr;
 
@@ -667,14 +670,8 @@ ssize_t _StandardSocket_sendto(Socket* this, struct iov_iter* iter, int flags,
       .msg_namelen      = sizeof(toSockAddr),
    };
 
-   // OSALLOU
-   //struct iovec iov = iov_iter_iovec(iter);
-   //iov_iter_init(&msg.msg_iter, WRITE, &iov, 1, 1);
-   //len = 1;
-
 #ifndef KERNEL_HAS_MSGHDR_ITER
    struct iovec iov = iov_iter_iovec(iter);
-
    msg.msg_iov       = &iov;
    msg.msg_iovlen    = 1;
    len = iov.iov_len;
@@ -683,32 +680,31 @@ ssize_t _StandardSocket_sendto(Socket* this, struct iov_iter* iter, int flags,
    len = iter->count;
 #endif // LINUX_VERSION_CODE
 
+   iov[0].iov_base = iter->iov[0].iov_base;
+   iov[0].iov_len = iter->iov[0].iov_len;
+
 
    if(to)
    {
       toSockAddr.sin_family = thisCast->sockDomain;
       toSockAddr.sin_addr = to->addr;
       toSockAddr.sin_port = to->port;
-      // OSALLOU move address to kernel
-      //struct sockaddr_storage kaddr;
-      //copy_to_user(&kaddr, msg.msg_name, msg.msg_namelen);
-      //msg.msg_name = &kaddr;
    }
 
 #ifdef set_fs
    ACQUIRE_PROCESS_CONTEXT(oldfs);
 #endif
-oldfs = force_uaccess_begin();
 
 #ifndef KERNEL_HAS_SOCK_SENDMSG_NOLEN
    sendRes = sock_sendmsg(thisCast->sock, &msg, len);
 #else
-   sendRes = sock_sendmsg(thisCast->sock, &msg);
+   //sendRes = sock_sendmsg(thisCast->sock, &msg);
+   sendRes = kernel_sendmsg(thisCast->sock, &msg, iov, 1, iov[0].iov_len);
 #endif
+
 #ifdef set_fs
    RELEASE_PROCESS_CONTEXT(oldfs);
 #endif
-force_uaccess_end(oldfs);
 
    if(sendRes >= 0)
       iov_iter_advance(iter, sendRes);
@@ -720,10 +716,11 @@ ssize_t StandardSocket_recvfrom(StandardSocket* this, struct iov_iter* iter, int
    fhgfs_sockaddr_in *from)
 {
    int recvRes;
-   mm_segment_t oldfs;
+   //mm_segment_t oldfs;
    size_t len;
 
    struct sockaddr_in fromSockAddr;
+   struct kvec iov;
 
    struct msghdr msg =
    {
@@ -748,10 +745,13 @@ ssize_t StandardSocket_recvfrom(StandardSocket* this, struct iov_iter* iter, int
    ACQUIRE_PROCESS_CONTEXT(oldfs);
 #endif
 
+iov.iov_base = iter->iov[0].iov_base;
+iov.iov_len = iter->iov[0].iov_len;
 #ifdef KERNEL_HAS_RECVMSG_SIZE
    recvRes = sock_recvmsg(this->sock, &msg, len, flags);
 #else
-   recvRes = sock_recvmsg(this->sock, &msg, flags);
+   //recvRes = sock_recvmsg(this->sock, &msg, flags);
+   recvRes = kernel_recvmsg(this->sock, &msg, &iov, 1, iov.iov_len, flags);
 #endif
 #ifdef set_fs
    RELEASE_PROCESS_CONTEXT(oldfs);
@@ -811,4 +811,5 @@ ssize_t StandardSocket_recvfromT(StandardSocket* this, struct iov_iter* iter, in
 
    return -ECOMM;
 }
+
 
