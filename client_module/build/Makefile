@@ -27,7 +27,7 @@ endif
 ifeq ($(KDIR),)
 KDIR = /lib/modules/$(shell uname -r)/build /usr/src/linux-headers-$(shell uname -r) \
        /usr/src/kernels/$(shell uname -r) \ 
-# On debian, set kernel headers path matching kernel version
+# If necessary, set kernel headers path matching kernel version
 #KDIR = /usr/src/linux-headers-5.10.0-9-amd64 /usr/src/linux-headers-5.10.0-9-common
 endif
 
