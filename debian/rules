@@ -16,6 +16,7 @@ endif
 	dh $@ --parallel --with dkms
 
 override_dh_auto_build:
+	make -j$(NUMJOBS) common-all daemons utils
 
 # no build-runnable tests exist (yet)
 override_dh_auto_test:
@@ -29,7 +30,11 @@ override_dh_install:
 		debian/beegfs-common/etc/beegfs/lib/start-stop-functions
 	install -D common_package/scripts/etc/beegfs/lib/init-multi-mode \
 		debian/beegfs-common/etc/beegfs/lib/init-multi-mode
+	@# libbeeggfs-ib
+	install -D common/build/libbeegfs_ib.so \
+		debian/libbeegfs-ib/opt/beegfs/lib/libbeegfs_ib.so
 	@# daemons
+	make -j$(NUMJOBS) DESTDIR=debian/beegfs-helperd helperd-install
 	@# setup scripts
 	install -D storage/build/dist/sbin/beegfs-setup-storage \
 		debian/beegfs-storage/opt/beegfs/sbin/beegfs-setup-storage
@@ -73,6 +78,20 @@ override_dh_install:
 	@# mon-grafana
 	mkdir -p debian/beegfs-mon-grafana/opt/beegfs/lib/grafana
 	cp -a mon/scripts/grafana/* debian/beegfs-mon-grafana/opt/beegfs/lib/grafana
+	@# utils
+	make -j$(NUMJOBS) DESTDIR=debian/beegfs-utils ctl-install fsck-install event_listener-install
+	mkdir -p debian/beegfs-utils/sbin
+	cp -a utils/scripts/fsck.beegfs debian/beegfs-utils/sbin
+	mkdir -p debian/beegfs-utils/usr/bin
+	cp -a utils/scripts/beegfs-* debian/beegfs-utils/usr/bin
+	mkdir -p debian/beegfs-utils/opt/beegfs/lib
+	cp java_lib/build/libjbeegfs.so java_lib/build/jbeegfs.jar \
+		debian/beegfs-utils/opt/beegfs/lib/
+	install -D -m644 utils/scripts/etc/bash_completion.d/beegfs-ctl \
+		debian/beegfs-utils/usr/share/bash-completion/completions/beegfs-ctl
+	mkdir -p debian/beegfs-utils/usr/sbin
+	ln -s /opt/beegfs/sbin/beegfs-ctl debian/beegfs-utils/usr/sbin/beegfs-ctl
+	ln -s /opt/beegfs/sbin/beegfs-fsck debian/beegfs-utils/usr/sbin/beegfs-fsck
 	@# beeond-thirdparty # does not build on most systems we support
 	@#make -j$(NUMJOBS) -C beeond_thirdparty/build
 	@#mkdir -p debian/beeond-thirdparty/opt/beegfs/thirdparty/pcopy
@@ -136,9 +155,17 @@ override_dh_strip:
 
 # avoid auto-start because default config is not useful
 override_dh_installinit:
+	for component in helperd; do \
+		cp $$component/build/dist/usr/lib/systemd/system/beegfs-$$component.service debian/; \
+		install -D -m644 $$component/build/dist/usr/lib/systemd/system/beegfs-$$component@.service \
+			debian/beegfs-$$component/lib/systemd/system/beegfs-$$component@.service; \
+		dh_systemd_enable -p beegfs-$$component --no-enable --name=beegfs-$$component@ beegfs-$$component@.service; \
+	done
 	cp client_module/build/dist/usr/lib/systemd/system/beegfs-client.service debian/
+	cp client_module/build/dist/usr/lib/systemd/system/beegfs-client@.service debian/
 	dh_systemd_enable
 	#
 	dh_installinit -pbeegfs-client        --no-restart-on-upgrade --no-start -- start 99 2 3 4 5 . stop 99 0 1 6 .
 	dh_installinit -pbeegfs-client-compat --no-restart-on-upgrade --no-start -- start 99 2 3 4 5 . stop 99 0 1 6 .
+	dh_installinit -pbeegfs-helperd       --no-restart-on-upgrade --no-start -- start 90 2 3 4 5 . stop 90 0 1 6 .
 
