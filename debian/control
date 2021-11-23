@@ -32,3 +32,23 @@ Description: BeeGFS client compat module, allows one to run two different client
  installed.
 Depends: ${misc:Depends}, build-essential
 
+Package: libbeegfs-ib
+Architecture: any
+Depends: ${misc:Depends}, ${shlibs:Depends}
+Description: BeeGFS InfiniBand support
+ This package contains support libraries for InfiniBand.
+
+Package: beegfs-common
+Architecture: any
+Depends: ${misc:Depends}
+Description: BeeGFS common files
+ The package contains files required by all BeeGFS daemon packages
+
+Package: beegfs-helperd
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, beegfs-common (= ${binary:Version})
+Recommends: libbeegfs-ib (= ${binary:Version})
+Description: BeeGFS helper daemon
+ The package contains the BeeGFS helper daemon. The helper daemon is responsible
+ to write (kernel) client messages to the client log file.
+
