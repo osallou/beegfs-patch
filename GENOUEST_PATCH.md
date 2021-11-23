@@ -15,7 +15,10 @@ client_module/build/Makefile and Release.mk **KDIR** to match your kernel:
 
     KDIR = /usr/src/linux-headers-5.10.0-9-amd64 /usr/src/linux-headers-5.10.0-9-common
 
+    # To compile all client packages (including client kernel module)
     make all
+    # To compile only commons/helperd
+    make daemons
 
 ## Debian packages
 
