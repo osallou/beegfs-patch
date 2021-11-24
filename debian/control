@@ -52,3 +52,9 @@ Description: BeeGFS helper daemon
  The package contains the BeeGFS helper daemon. The helper daemon is responsible
  to write (kernel) client messages to the client log file.
 
+Package: beegfs-utils
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, beegfs-common (= ${binary:Version})
+Recommends: libbeegfs-ib (= ${binary:Version})
+Description: BeeGFS utils
+ This package contains BeeGFS utilities.
