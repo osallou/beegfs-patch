@@ -85,8 +85,8 @@ override_dh_install:
 	mkdir -p debian/beegfs-utils/usr/bin
 	cp -a utils/scripts/beegfs-* debian/beegfs-utils/usr/bin
 	mkdir -p debian/beegfs-utils/opt/beegfs/lib
-	cp java_lib/build/libjbeegfs.so java_lib/build/jbeegfs.jar \
-		debian/beegfs-utils/opt/beegfs/lib/
+	#cp java_lib/build/libjbeegfs.so java_lib/build/jbeegfs.jar \
+	#	debian/beegfs-utils/opt/beegfs/lib/
 	install -D -m644 utils/scripts/etc/bash_completion.d/beegfs-ctl \
 		debian/beegfs-utils/usr/share/bash-completion/completions/beegfs-ctl
 	mkdir -p debian/beegfs-utils/usr/sbin
@@ -162,7 +162,7 @@ override_dh_installinit:
 		dh_systemd_enable -p beegfs-$$component --no-enable --name=beegfs-$$component@ beegfs-$$component@.service; \
 	done
 	cp client_module/build/dist/usr/lib/systemd/system/beegfs-client.service debian/
-	cp client_module/build/dist/usr/lib/systemd/system/beegfs-client@.service debian/
+	#cp client_module/build/dist/usr/lib/systemd/system/beegfs-client@.service debian/
 	dh_systemd_enable
 	#
 	dh_installinit -pbeegfs-client        --no-restart-on-upgrade --no-start -- start 99 2 3 4 5 . stop 99 0 1 6 .
