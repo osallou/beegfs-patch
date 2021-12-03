@@ -24,6 +24,6 @@ To compile
 
 ## Debian packages
 
-    BEEGFS_VERSION=1.7.5 make package-deb PACKAGE_DIR=/tmp/beegfs
+    BEEGFS_VERSION=7.1.5 make package-deb PACKAGE_DIR=/tmp/beegfs
 
 
