@@ -8,7 +8,7 @@ Tested only on Debian Bullseye
 
 ## Build
 
-Install dependencies shown in README and linux-headers-amd64
+Install dependencies shown in README and linux-headers-amd64 and dkms packages
 
 To build client module, update if necessary (error on kernel headers not found)
 client_module/build/Makefile and Release.mk **KDIR** to match your kernel:
