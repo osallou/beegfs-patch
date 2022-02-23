@@ -917,7 +917,7 @@ int FhgfsOps_mkdir(struct inode* dir, struct dentry* dentry, int mode)
    { // remote success => create the local inode
       retVal = __FhgfsOps_instantiateInode(dentry, &newEntryInfo, NULL, &iSizeHints);
 
-      dir->i_ctime = dir->i_mtime = current_fs_time(sb);
+      dir->i_ctime = dir->i_mtime = current_fs_time(dentry->d_inode);
    }
 
    FileEvent_uninit(&event);
@@ -966,7 +966,7 @@ int FhgfsOps_rmdir(struct inode* dir, struct dentry* dentry)
    { // remote success
       clear_nlink(dentry->d_inode);
 
-      dir->i_ctime = dir->i_mtime = current_fs_time(sb);
+      dir->i_ctime = dir->i_mtime = current_fs_time(dentry->d_inode);
    }
 
 
@@ -1099,7 +1099,7 @@ int FhgfsOps_createIntent(struct inode* dir, struct dentry* dentry, int createMo
       lookupOutInfo.fhgfsStat, &iSizeHints);
    LookupIntentInfoOut_setEntryInfoPtr(&lookupOutInfo, NULL); /* Make sure entryInfo will not be
                                                          *  de-initialized */
-   dir->i_ctime = dir->i_mtime = current_fs_time(sb);
+   dir->i_ctime = dir->i_mtime = current_fs_time(dentry->d_inode);
 
 #ifndef KERNEL_HAS_ATOMIC_OPEN
    if (lookupOutInfo.openRes == FhgfsOpsErr_SUCCESS)
@@ -1317,7 +1317,7 @@ int FhgfsOps_atomicOpen(struct inode* dir, struct dentry* dentry, struct file* f
 
          if (lookupOutInfo.lookupRes != FhgfsOpsErr_SUCCESS)
          {  // only update directory time stamps if the file did not exist yet
-            dir->i_ctime = dir->i_mtime = current_fs_time(sb);
+            dir->i_ctime = dir->i_mtime = current_fs_time(inode);
          }
       }
       else
@@ -1479,7 +1479,7 @@ int FhgfsOps_unlink(struct inode* dir, struct dentry* dentry)
    }
    else
    { // remote success
-      dir->i_ctime = dir->i_mtime = current_fs_time(sb);
+      dir->i_ctime = dir->i_mtime = current_fs_time(dentry->d_inode);
 
       if(dentry->d_inode)
       {
@@ -1552,7 +1552,7 @@ int FhgfsOps_mknod(struct inode* dir, struct dentry* dentry, int mode, dev_t dev
 
    retVal = __FhgfsOps_instantiateInode(dentry, &newEntryInfo, NULL, &iSizeHints);
 
-   dir->i_ctime = dir->i_mtime = current_fs_time(sb);
+   dir->i_ctime = dir->i_mtime = current_fs_time(dentry->d_inode);
 
    FileEvent_uninit(&event);
 
@@ -1616,7 +1616,7 @@ int FhgfsOps_symlink(struct inode* dir, struct dentry* dentry, const char* to)
    { // remote success => create local inode
       retVal = __FhgfsOps_instantiateInode(dentry, &newEntryInfo, NULL, &iSizeHints);
 
-      dir->i_ctime = dir->i_mtime = current_fs_time(sb);
+      dir->i_ctime = dir->i_mtime = current_fs_time(dentry->d_inode);
    }
 
 
@@ -1837,7 +1837,7 @@ int FhgfsOps_hardlinkAsSymlink(struct dentry* oldDentry, struct inode* dir,
    { // remote success => create local inode
       retVal = __FhgfsOps_instantiateInode(newDentry, &newEntryInfo, NULL, &iSizeHints);
 
-      dir->i_ctime = dir->i_mtime = current_fs_time(sb);
+      dir->i_ctime = dir->i_mtime = current_fs_time(newDentry->d_inode);
    }
 
    // clean-up
@@ -2040,7 +2040,7 @@ int FhgfsOps_rename(struct inode* inodeDirFrom, struct dentry* dentryFrom,
    else
    { // remote success
       fromEntryInode->i_ctime = inodeDirFrom->i_ctime = inodeDirFrom->i_mtime =
-         inodeDirTo->i_ctime = inodeDirTo->i_mtime = current_fs_time(sb);
+         inodeDirTo->i_ctime = inodeDirTo->i_mtime = current_fs_time(fromEntryInode);
 
       FhgfsInode_updateEntryInfoOnRenameUnlocked(fhgfsFromEntryInode, toDirInfo, newName);
    }
@@ -2498,7 +2498,7 @@ int __FhgfsOps_doRefreshInode(App* app, struct inode* inode, fhgfs_stat* fhgfsSt
    FhgfsOpsErr statRes;
    FhgfsInode* fhgfsInode = BEEGFS_INODE(inode);
 
-   time_t oldMTime;
+   struct timespec64 oldMTime;
    loff_t oldSize;
    unsigned cacheElapsedMS;
    bool mtimeSizeInvalidate;
@@ -2581,7 +2581,7 @@ int __FhgfsOps_doRefreshInode(App* app, struct inode* inode, fhgfs_stat* fhgfsSt
 
    spin_lock(&inode->i_lock); // I _ L O C K
 
-   oldMTime = inode->i_mtime.tv_sec;
+   oldMTime.tv_sec = inode->i_mtime.tv_sec;
    oldSize = i_size_read(inode);
 
    __FhgfsOps_applyStatDataToInodeUnlocked(&kstat, iSizeHints, inode);
@@ -2589,7 +2589,7 @@ int __FhgfsOps_doRefreshInode(App* app, struct inode* inode, fhgfs_stat* fhgfsSt
    // compare previous size/mtime to detect modifications by other clients
 
    mtimeSizeInvalidate =
-      (inode->i_mtime.tv_sec != oldMTime) || (i_size_read(inode) != oldSize);
+      (inode->i_mtime.tv_sec != oldMTime.tv_sec) || (i_size_read(inode) != oldSize);
    cacheElapsedMS = Time_elapsedMS(&fhgfsInode->dataCacheTime);
    timeoutInvalidate = cacheElapsedMS > Config_getTunePageCacheValidityMS(cfg);
 

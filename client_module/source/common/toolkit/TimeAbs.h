@@ -11,7 +11,7 @@ typedef struct TimeAbs TimeAbs;
 extern void TimeAbs_init(TimeAbs* this);
 
 // getters & setters
-static inline struct timeval* TimeAbs_getTimeval(TimeAbs* this);
+static inline struct timespec64* TimeAbs_getTimeval(TimeAbs* this);
 
 /**
  * This time class is based on a non-monotonic clock. Use the Time class instead of this one,
@@ -19,11 +19,11 @@ static inline struct timeval* TimeAbs_getTimeval(TimeAbs* this);
  */
 struct TimeAbs
 {
-   struct timeval now;
+   struct timespec64 now;
 };
 
 
-struct timeval* TimeAbs_getTimeval(TimeAbs* this)
+struct timespec64* TimeAbs_getTimeval(TimeAbs* this)
 {
    return &this->now;
 }

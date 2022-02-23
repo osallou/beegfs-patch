@@ -3,8 +3,10 @@
 #include <common/toolkit/SocketTk.h>
 #include <common/Common.h>
 
+
 #include <linux/in.h>
 #include <linux/tcp.h>
+#include <linux/socket.h>
 
 
 #define SOCKET_LISTEN_BACKLOG                32
@@ -25,9 +27,9 @@ static const struct SocketOps standardOps = {
 };
 
 #ifdef KERNEL_HAS_SKWQ_HAS_SLEEPER
-# define __sock_has_sleeper(wq) (skwq_has_sleeper(wq))
+# define __sock_has_sleeper(wq) (skwq_has_sleeper(&wq->wait))
 #else
-# define __sock_has_sleeper(wq) (wq_has_sleeper(wq))
+# define __sock_has_sleeper(wq) (wq_has_sleeper(&wq->wait))
 #endif
 
 #if defined(KERNEL_HAS_SK_SLEEP) && !defined(KERNEL_HAS_SK_HAS_SLEEPER)
@@ -38,7 +40,7 @@ static inline int sk_has_sleeper(struct sock* sk)
 #endif
 
 #ifndef __wake_up_sync_key
-# define __wake_up_sync_key(wq, state, n, key) __wake_up_sync(wq, state, n)
+# define __wake_up_sync_key(wq, state, n, key) __wake_up_sync(wq, state)
 #endif
 
 /* unlike linux sock_def_readable, this will also wake TASK_KILLABLE threads. we need this
@@ -241,22 +243,24 @@ void __StandardSocket_setAllocMode(StandardSocket* this, gfp_t flags)
  * @return 0 on success, error code otherwise (=> different from userspace version)
  */
 int _StandardSocket_setsockopt(StandardSocket* this, int level,
-   int optname, char* optval, int optlen)
+   int optname, sockptr_t optval, int optlen)
 {
    int retVal = -EINVAL;
-   mm_segment_t oldfs;
+   //mm_segment_t oldfs;
 
    if(optlen < 0)
       return retVal;
-
+#ifdef set_fs
    ACQUIRE_PROCESS_CONTEXT(oldfs);
+#endif
 
    if (level == SOL_SOCKET)
       retVal = sock_setsockopt(this->sock, level, optname, optval, optlen);
    else
       retVal = this->sock->ops->setsockopt(this->sock, level, optname, optval, optlen);
-
+#ifdef set_fs
    RELEASE_PROCESS_CONTEXT(oldfs);
+#endif
 
    return retVal;
 }
@@ -274,13 +278,13 @@ int _StandardSocket_getsockopt(StandardSocket* this, int level, int optname,
    char* optval, int* optlen)
 {
    int retVal = -EINVAL;
-   mm_segment_t oldfs;
+   //mm_segment_t oldfs;
 
    if(*optlen < 0)
       return retVal;
-
+#ifdef set_fs
    ACQUIRE_PROCESS_CONTEXT(oldfs);
-
+#endif
    // note: sock_getsockopt() is not exported to modules
 
    if(level == SOL_SOCKET)
@@ -305,8 +309,9 @@ int _StandardSocket_getsockopt(StandardSocket* this, int level, int optname,
    }
    else
       retVal = this->sock->ops->getsockopt(this->sock, level, optname, optval, optlen);
-
+#ifdef set_fs
    RELEASE_PROCESS_CONTEXT(oldfs);
+#endif
 
    return retVal;
 }
@@ -318,7 +323,7 @@ bool StandardSocket_setSoKeepAlive(StandardSocket* this, bool enable)
    int setRes = _StandardSocket_setsockopt(this,
       SOL_SOCKET,
       SO_KEEPALIVE,
-      (char*)&keepAliveVal,
+      KERNEL_SOCKPTR(&keepAliveVal),
       sizeof(keepAliveVal) );
 
    if(setRes != 0)
@@ -334,7 +339,7 @@ bool StandardSocket_setSoBroadcast(StandardSocket* this, bool enable)
    int setRes = _StandardSocket_setsockopt(this,
       SOL_SOCKET,
       SO_BROADCAST,
-      (char*)&broadcastVal,
+      KERNEL_SOCKPTR(&broadcastVal),
       sizeof(broadcastVal) );
 
    if(setRes != 0)
@@ -390,7 +395,7 @@ bool StandardSocket_setSoRcvBuf(StandardSocket* this, int size)
    setRes = _StandardSocket_setsockopt(this,
       SOL_SOCKET,
       SO_RCVBUF,
-      (char*)&halfSize,
+      KERNEL_SOCKPTR(&halfSize),
       sizeof(halfSize) );
 
    if(setRes)
@@ -409,7 +414,7 @@ bool StandardSocket_setTcpNoDelay(StandardSocket* this, bool enable)
    int noDelayRes = _StandardSocket_setsockopt(this,
       IPPROTO_TCP,
       TCP_NODELAY,
-      (char*)&noDelayVal,
+      KERNEL_SOCKPTR(&noDelayVal),
       sizeof(noDelayVal) );
 
    if(noDelayRes != 0)
@@ -425,7 +430,7 @@ bool StandardSocket_setTcpCork(StandardSocket* this, bool enable)
    int setRes = _StandardSocket_setsockopt(this,
       SOL_TCP,
       TCP_CORK,
-      (char*)&corkVal,
+      KERNEL_SOCKPTR(&corkVal),
       sizeof(corkVal) );
 
    if(setRes != 0)
@@ -447,7 +452,7 @@ bool _StandardSocket_connectByIP(Socket* this, struct in_addr* ipaddress, unsign
 
    StandardSocket* thisCast = (StandardSocket*)this;
 
-   mm_segment_t oldfs;
+   //mm_segment_t oldfs;
    int connRes;
 
    struct sockaddr_in serveraddr =
@@ -457,16 +462,17 @@ bool _StandardSocket_connectByIP(Socket* this, struct in_addr* ipaddress, unsign
       .sin_port = htons(port),
    };
 
-
+#ifdef set_fs
    ACQUIRE_PROCESS_CONTEXT(oldfs);
-
+#endif
    connRes = thisCast->sock->ops->connect(
       thisCast->sock,
       (struct sockaddr*) &serveraddr,
       sizeof(serveraddr),
       O_NONBLOCK); // non-blocking connect
-
+#ifdef set_fs
    RELEASE_PROCESS_CONTEXT(oldfs);
+#endif
 
    if(connRes)
    {
@@ -579,13 +585,15 @@ bool _StandardSocket_shutdown(Socket* this)
    StandardSocket* thisCast = (StandardSocket*)this;
 
    int sendshutRes;
-   mm_segment_t oldfs;
-
+   //mm_segment_t oldfs;
+#ifdef set_fs
    ACQUIRE_PROCESS_CONTEXT(oldfs);
+#endif
 
    sendshutRes = thisCast->sock->ops->shutdown(thisCast->sock, SEND_SHUTDOWN);
-
+#ifdef set_fs
    RELEASE_PROCESS_CONTEXT(oldfs);
+#endif
 
    if( (sendshutRes < 0) && (sendshutRes != -ENOTCONN) )
    {
@@ -601,21 +609,23 @@ bool _StandardSocket_shutdownAndRecvDisconnect(Socket* this, int timeoutMS)
    bool shutRes;
    char buf[SOCKET_SHUTDOWN_RECV_BUF_LEN];
    int recvRes;
-   mm_segment_t oldfs;
+   //mm_segment_t oldfs;
 
    shutRes = this->ops->shutdown(this);
    if(!shutRes)
       return false;
-
+#ifdef set_fs
    ACQUIRE_PROCESS_CONTEXT(oldfs);
+#endif
 
    // receive until shutdown arrives
    do
    {
       recvRes = Socket_recvT(this, buf, SOCKET_SHUTDOWN_RECV_BUF_LEN, 0, timeoutMS);
    } while(recvRes > 0);
-
+#ifdef set_fs
    RELEASE_PROCESS_CONTEXT(oldfs);
+#endif
 
    if(recvRes &&
       (recvRes != -ECONNRESET) )
@@ -644,7 +654,10 @@ ssize_t _StandardSocket_sendto(Socket* this, struct iov_iter* iter, int flags,
 
    int sendRes;
    size_t len;
-   mm_segment_t oldfs;
+
+   struct kvec iov;
+
+   //mm_segment_t oldfs;
 
    struct sockaddr_in toSockAddr;
 
@@ -659,7 +672,6 @@ ssize_t _StandardSocket_sendto(Socket* this, struct iov_iter* iter, int flags,
 
 #ifndef KERNEL_HAS_MSGHDR_ITER
    struct iovec iov = iov_iter_iovec(iter);
-
    msg.msg_iov       = &iov;
    msg.msg_iovlen    = 1;
    len = iov.iov_len;
@@ -668,6 +680,10 @@ ssize_t _StandardSocket_sendto(Socket* this, struct iov_iter* iter, int flags,
    len = iter->count;
 #endif // LINUX_VERSION_CODE
 
+   iov.iov_base = iter->iov->iov_base + iter->iov_offset;
+   iov.iov_len = min(iter->count, iter->iov->iov_len - iter->iov_offset);
+
+
    if(to)
    {
       toSockAddr.sin_family = thisCast->sockDomain;
@@ -675,15 +691,20 @@ ssize_t _StandardSocket_sendto(Socket* this, struct iov_iter* iter, int flags,
       toSockAddr.sin_port = to->port;
    }
 
+#ifdef set_fs
    ACQUIRE_PROCESS_CONTEXT(oldfs);
+#endif
 
 #ifndef KERNEL_HAS_SOCK_SENDMSG_NOLEN
    sendRes = sock_sendmsg(thisCast->sock, &msg, len);
 #else
-   sendRes = sock_sendmsg(thisCast->sock, &msg);
+   //sendRes = sock_sendmsg(thisCast->sock, &msg);
+   sendRes = kernel_sendmsg(thisCast->sock, &msg, &iov, 1, iov.iov_len);
 #endif
 
+#ifdef set_fs
    RELEASE_PROCESS_CONTEXT(oldfs);
+#endif
 
    if(sendRes >= 0)
       iov_iter_advance(iter, sendRes);
@@ -695,10 +716,11 @@ ssize_t StandardSocket_recvfrom(StandardSocket* this, struct iov_iter* iter, int
    fhgfs_sockaddr_in *from)
 {
    int recvRes;
-   mm_segment_t oldfs;
+   //mm_segment_t oldfs;
    size_t len;
 
    struct sockaddr_in fromSockAddr;
+   struct kvec iov;
 
    struct msghdr msg =
    {
@@ -719,16 +741,22 @@ ssize_t StandardSocket_recvfrom(StandardSocket* this, struct iov_iter* iter, int
    msg.msg_iter = *iter;
    len = iter->count;
 #endif // LINUX_VERSION_CODE
-
+#ifdef set_fs
    ACQUIRE_PROCESS_CONTEXT(oldfs);
+#endif
+
+iov.iov_base = iter->iov->iov_base + iter->iov_offset;
+iov.iov_len = min(iter->count, iter->iov->iov_len - iter->iov_offset);
 
 #ifdef KERNEL_HAS_RECVMSG_SIZE
    recvRes = sock_recvmsg(this->sock, &msg, len, flags);
 #else
-   recvRes = sock_recvmsg(this->sock, &msg, flags);
+   //recvRes = sock_recvmsg(this->sock, &msg, flags);
+   recvRes = kernel_recvmsg(this->sock, &msg, &iov, 1, iov.iov_len, flags);
 #endif
-
+#ifdef set_fs
    RELEASE_PROCESS_CONTEXT(oldfs);
+#endif
 
    if(recvRes > 0)
       iov_iter_advance(iter, recvRes);
@@ -784,3 +812,5 @@ ssize_t StandardSocket_recvfromT(StandardSocket* this, struct iov_iter* iter, in
 
    return -ECOMM;
 }
+
+
