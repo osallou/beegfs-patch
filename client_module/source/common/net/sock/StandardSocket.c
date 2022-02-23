@@ -655,7 +655,7 @@ ssize_t _StandardSocket_sendto(Socket* this, struct iov_iter* iter, int flags,
    int sendRes;
    size_t len;
 
-   struct kvec iov[1];
+   struct kvec iov;
 
    //mm_segment_t oldfs;
 
@@ -680,8 +680,8 @@ ssize_t _StandardSocket_sendto(Socket* this, struct iov_iter* iter, int flags,
    len = iter->count;
 #endif // LINUX_VERSION_CODE
 
-   iov[0].iov_base = iter->iov[0].iov_base;
-   iov[0].iov_len = iter->iov[0].iov_len;
+   iov.iov_base = iter->iov->iov_base + iter->iov_offset;
+   iov.iov_len = min(iter->count, iter->iov->iov_len - iter->iov_offset);
 
 
    if(to)
@@ -699,7 +699,7 @@ ssize_t _StandardSocket_sendto(Socket* this, struct iov_iter* iter, int flags,
    sendRes = sock_sendmsg(thisCast->sock, &msg, len);
 #else
    //sendRes = sock_sendmsg(thisCast->sock, &msg);
-   sendRes = kernel_sendmsg(thisCast->sock, &msg, iov, 1, iov[0].iov_len);
+   sendRes = kernel_sendmsg(thisCast->sock, &msg, &iov, 1, iov.iov_len);
 #endif
 
 #ifdef set_fs
@@ -745,8 +745,9 @@ ssize_t StandardSocket_recvfrom(StandardSocket* this, struct iov_iter* iter, int
    ACQUIRE_PROCESS_CONTEXT(oldfs);
 #endif
 
-iov.iov_base = iter->iov[0].iov_base;
-iov.iov_len = iter->iov[0].iov_len;
+iov.iov_base = iter->iov->iov_base + iter->iov_offset;
+iov.iov_len = min(iter->count, iter->iov->iov_len - iter->iov_offset);
+
 #ifdef KERNEL_HAS_RECVMSG_SIZE
    recvRes = sock_recvmsg(this->sock, &msg, len, flags);
 #else
