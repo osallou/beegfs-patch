@@ -133,7 +133,8 @@ AR += -T
 endif
 
 CXXFLAGS = \
-   -std=gnu++1y -D_LARGEFILE64_SOURCE -D_FILE_OFFSET_BITS=64 \
+   -fPIE \
+   -std=gnu++14 -D_LARGEFILE64_SOURCE -D_FILE_OFFSET_BITS=64 \
    -isystem $(BOOST_INC_PATH) -isystem $(NU_INC_PATH) \
    -pthread \
    -fno-strict-aliasing -fmessage-length=0 \
@@ -147,7 +148,7 @@ CXXFLAGS_DEBUG = -O1 -D_FORTIFY_SOURCE=2 \
    -DDEBUG_BACKTRACE  -DLOG_DEBUG_MESSAGES
 CXXFLAGS_COVERAGE = --coverage -O1 -fno-inline
 
-LDFLAGS = -std=c++1y \
+LDFLAGS = -std=c++14 \
    -rdynamic \
    -pthread -lrt \
    -Wl,-rpath,'$$ORIGIN/../lib' \

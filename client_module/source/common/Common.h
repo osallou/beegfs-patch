@@ -139,11 +139,13 @@
 #define IGNORE_UNUSED_DEBUG_VARIABLE(a)   do{ if( ((long)a)==1) {} } while(0)
 #endif
 
+#ifdef set_fs
 /* wrappers for get_fs()/set_fs() */
 #define ACQUIRE_PROCESS_CONTEXT(fs_varname) \
    do { fs_varname = get_fs(); set_fs(KERNEL_DS); } while(0)
 #define RELEASE_PROCESS_CONTEXT(fs_varname) \
    set_fs(fs_varname)
+#endif
 
 
 // in 4.13 wait_queue_t got renamed to wait_queue_entry_t
@@ -152,21 +154,25 @@
 #endif
 
 #if defined(KERNEL_HAS_64BIT_TIMESTAMPS)
-static inline struct timespec64 current_fs_time(struct super_block *sb)
+static inline struct timespec64 current_fs_time(struct inode *sb)
 {
 #if defined(KERNEL_HAS_KTIME_GET)
    struct timespec64 now;
    ktime_get_real_ts64(&now);
+   return timestamp_truncate(now, sb);
 #else
-   struct timespec64 now = current_kernel_time64();
+   //struct timespec64 now = current_kernel_time64();
+   struct timespec64 now; ktime_get_coarse_real_ts64(&now);
+   return timestamp_truncate(now, sb);
 #endif /* KERNEL_HAS_KTIME_GET */
-   return timespec64_trunc(now, sb->s_time_gran);
+   //return timespec64_trunc(now, sb->s_time_gran);
 }
 #elif !defined(KERNEL_HAS_CURRENT_FS_TIME)
-static inline struct timespec current_fs_time(struct super_block *sb)
+static inline struct timespec current_fs_time(struct inode *sb)
 {
-   struct timespec now = current_kernel_time();
-   return timespec_trunc(now, sb->s_time_gran);
+   //struct timespec now = current_kernel_time();
+   struct timespec now; ktime_get_coarse_real_ts64(&now);
+   return timespec_trunc(now, sb);
 }
 #endif
 

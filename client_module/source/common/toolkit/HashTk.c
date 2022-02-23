@@ -1,6 +1,7 @@
 #include <common/toolkit/HashTk.h>
 
-#include <linux/cryptohash.h>
+//#include <linux/cryptohash.h>
+#include <crypto/hash.h>
 
 #define get16bits(d) (*((const uint16_t *) (d)))
 

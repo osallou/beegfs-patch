@@ -150,7 +150,8 @@ public:
 	///    Swaps the states of ``*this`` and ``other``.
 	///
 	///    :noexcept: |swap(T,T)-noexcept|
-	void swap(error_or& other) noexcept(error_or::is_nothrow_swappable<T>())
+	//void swap(error_or& other) noexcept(error_or::is_nothrow_swappable<T>())
+	void swap(error_or& other) noexcept
 	{
 		using std::swap;
 

@@ -26,7 +26,9 @@ endif
 # multiple directories here as a space-separated list)
 ifeq ($(KDIR),)
 KDIR = /lib/modules/$(shell uname -r)/build /usr/src/linux-headers-$(shell uname -r) \
-       /usr/src/kernels/$(shell uname -r)
+       /usr/src/kernels/$(shell uname -r) \ 
+# If necessary, set kernel headers path matching kernel version
+#KDIR = /usr/src/linux-headers-5.10.0-9-amd64 /usr/src/linux-headers-5.10.0-9-common
 endif
 
 # Prune the KDIR list down to paths that exist and have an
@@ -35,6 +37,7 @@ endif
 test_dir = $(shell [ -e $(dir)/include/linux/version.h -o \
 	-e $(dir)/include/generated/uapi/linux/version.h ] && echo $(dir) )
 KDIR_PRUNED := $(foreach dir, $(KDIR), $(test_dir) )
+#KDIR_PRUNED=$(KDIR)
 
 # We use the first valid entry of the pruned KDIR list
 KDIR_PRUNED_HEAD := $(firstword $(KDIR_PRUNED) )

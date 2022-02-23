@@ -1649,7 +1649,7 @@ int __IBVSocket_cmaHandler(struct rdma_cm_id* cm_id, struct rdma_cm_event* event
 
       case RDMA_CM_EVENT_CONNECT_REQUEST:
          // incoming connections not supported => reject all
-         rdma_reject(cm_id, NULL, 0);
+         rdma_reject(cm_id, NULL, 0, IB_CM_REJ_CONSUMER_DEFINED);
          break;
 
       case RDMA_CM_EVENT_CONNECT_RESPONSE:
