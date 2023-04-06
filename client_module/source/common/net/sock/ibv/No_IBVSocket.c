@@ -1,6 +1,6 @@
 #include "IBVSocket.h"
 
-#if !defined(CONFIG_INFINIBAND) && !defined(CONFIG_INFINIBAND_MODULE)
+#ifndef BEEGFS_RDMA
 
 bool IBVSocket_init(IBVSocket* _this)
 {
@@ -78,11 +78,19 @@ unsigned long IBVSocket_poll(IBVSocket* _this, short events, bool finishPoll)
    return ~0;
 }
 
+void IBVSocket_setTimeouts(IBVSocket* _this, int connectMS,
+   int completionMS, int flowSendMS, int flowRecvMS, int pollMS)
+{
+}
 
 void IBVSocket_setTypeOfService(IBVSocket* _this, int typeOfService)
 {
 }
 
+
+void IBVSocket_setConnectionFailureStatus(IBVSocket* _this, unsigned value)
+{
+}
 
 #endif
 

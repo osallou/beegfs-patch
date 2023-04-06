@@ -1,13 +1,13 @@
 #ifndef IBVBuffer_h_aMQFNfzrjbEHDOcv216fi
 #define IBVBuffer_h_aMQFNfzrjbEHDOcv216fi
 
-#if defined(CONFIG_INFINIBAND) || defined(CONFIG_INFINIBAND_MODULE)
+#include <common/Common.h>
+#ifdef BEEGFS_RDMA
 
 #include <rdma/ib_verbs.h>
 #include <rdma/rdma_cm.h>
 #include <rdma/ib_cm.h>
 
-#include <common/Common.h>
 #include <os/iov_iter.h>
 
 #ifndef BEEGFS_IBVERBS_FRAGMENT_PAGES
@@ -23,7 +23,8 @@ typedef struct IBVBuffer IBVBuffer;
 struct IBVCommContext;
 
 
-extern bool IBVBuffer_init(IBVBuffer* buffer, struct IBVCommContext* ctx, size_t bufLen);
+extern bool IBVBuffer_init(IBVBuffer* buffer, struct IBVCommContext* ctx, size_t bufLen,
+   enum dma_data_direction dma_dir);
 extern void IBVBuffer_free(IBVBuffer* buffer, struct IBVCommContext* ctx);
 extern ssize_t IBVBuffer_fill(IBVBuffer* buffer, struct iov_iter* iter);
 
@@ -37,6 +38,7 @@ struct IBVBuffer
    unsigned bufferCount;
 
    unsigned listLength;
+   enum dma_data_direction dma_dir;
 };
 
 #endif

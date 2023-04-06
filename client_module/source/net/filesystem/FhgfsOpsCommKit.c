@@ -769,7 +769,7 @@ static FhgfsOpsErr __commkit_message_genericResponse(CommKitContext* context,
                Node_getNodeIDWithTypeStr(info->node),
                GenericResponseMsg_getLogStr(&msg) );
             Logger_logFormatted(context->log, Log_DEBUG, logContext,
-               "Message type: %hu", requestMsgType);
+               "Message type: %u", requestMsgType);
          }
 
          return FhgfsOpsErr_AGAIN;
@@ -784,7 +784,7 @@ static FhgfsOpsErr __commkit_message_genericResponse(CommKitContext* context,
                Node_getNodeIDWithTypeStr(info->node),
                GenericResponseMsg_getLogStr(&msg) );
             Logger_logFormatted(context->log, Log_DEBUG, logContext,
-               "Message type: %hu", requestMsgType);
+               "Message type: %u", requestMsgType);
          }
 
          return FhgfsOpsErr_COMMUNICATION;
@@ -796,7 +796,7 @@ static FhgfsOpsErr __commkit_message_genericResponse(CommKitContext* context,
             (unsigned)GenericResponseMsg_getControlCode(&msg),
             GenericResponseMsg_getLogStr(&msg) );
          Logger_logFormatted(context->log, Log_DEBUG, logContext,
-            "Message type: %hu", requestMsgType);
+            "Message type: %u", requestMsgType);
 
          return FhgfsOpsErr_INTERNAL;
    }
@@ -923,6 +923,7 @@ void FhgfsOpsCommkit_communicate(App* app, RemotingIOInfo* ioInfo, struct list_h
 static unsigned __commkit_readfile_prepareHeader(CommKitContext* context,
    struct CommKitTargetInfo* info)
 {
+   Config* cfg = App_getConfig(context->app);
    Node* localNode = App_getLocalNode(context->app);
    const NumNodeID localNodeNumID = Node_getNumID(localNode);
    ReadfileState* currentState = container_of(info, ReadfileState, base);
@@ -936,7 +937,7 @@ static unsigned __commkit_readfile_prepareHeader(CommKitContext* context,
 
    NetMessage_setMsgHeaderTargetID(&readMsg.netMessage, info->selectedTargetID);
 
-   if (currentState->firstWriteDoneForTarget)
+   if (currentState->firstWriteDoneForTarget && Config_getSysSessionChecksEnabled(cfg))
       NetMessage_addMsgHeaderFeatureFlag(&readMsg.netMessage, READLOCALFILEMSG_FLAG_SESSION_CHECK);
 
    if(StripePattern_getPatternType(context->ioInfo->pattern) == STRIPEPATTERN_BuddyMirror)
@@ -981,13 +982,15 @@ static ssize_t __commkit_readfile_receive(CommKitContext* context, ReadfileState
    ssize_t recvRes;
    Socket* socket = currentState->base.socket;
 
+   Config* cfg = App_getConfig(context->app);
+
    if(BEEGFS_SHOULD_FAIL(commkit_readfile_receive_timeout, 1) )
       recvRes = -ETIMEDOUT;
    else
    if(exact)
-      recvRes = Socket_recvExactT(socket, buffer, length, 0, CONN_LONG_TIMEOUT);
+      recvRes = Socket_recvExactT(socket, buffer, length, 0, cfg->connMsgLongTimeout);
    else
-      recvRes = Socket_recvT(socket, buffer, length, 0, CONN_LONG_TIMEOUT);
+      recvRes = Socket_recvT(socket, buffer, length, 0, cfg->connMsgLongTimeout);
 
    if(unlikely(recvRes < 0) )
    {
@@ -1033,7 +1036,7 @@ static int __commkit_readfile_recvdata_prefix(CommKitContext* context, ReadfileS
    if(unlikely(currentState->transmitted + lengthInfo > currentState->totalReadSize) )
    {
       Logger_logErrFormatted(context->log, context->ops->logContext,
-         "Bug: Received a lengthInfo that would overflow request from %s: %lld %lld %zu",
+         "Bug: Received a lengthInfo that would overflow request from %s: %lld %zu %zu",
          Node_getNodeIDWithTypeStr(currentState->base.node), (long long)lengthInfo,
          currentState->transmitted, currentState->totalReadSize);
 
@@ -1127,7 +1130,7 @@ static unsigned __commkit_writefile_prepareHeader(CommKitContext* context,
       WriteLocalFileMsg_setUserdataForQuota(&writeMsg, context->ioInfo->userID,
          context->ioInfo->groupID);
 
-   if (currentState->firstWriteDoneForTarget)
+   if (currentState->firstWriteDoneForTarget && Config_getSysSessionChecksEnabled(cfg))
       NetMessage_addMsgHeaderFeatureFlag(&writeMsg.netMessage,
          WRITELOCALFILEMSG_FLAG_SESSION_CHECK);
 
@@ -1325,6 +1328,7 @@ static unsigned __commkit_fsync_prepareHeader(CommKitContext* context,
    struct FsyncContext* fctx = context->private;
    struct FsyncState* state = container_of(info, struct FsyncState, base);
 
+   Config* cfg = App_getConfig(context->app);
    Node* localNode = App_getLocalNode(context->app);
    const NumNodeID localNodeNumID = Node_getNumID(localNode);
 
@@ -1355,7 +1359,8 @@ static unsigned __commkit_fsync_prepareHeader(CommKitContext* context,
 
    // required version is checked in FSyncChunkFileWork_process and if session check is not
    // supported by the server, the value of this->checkSession was set to false
-   if(fctx->checkSession && state->firstWriteDoneForTarget)
+   if(fctx->checkSession && state->firstWriteDoneForTarget
+         && Config_getSysSessionChecksEnabled(cfg))
       NetMessage_addMsgHeaderFeatureFlag(&requestMsg.netMessage,
          FSYNCLOCALFILEMSG_FLAG_SESSION_CHECK);
 
