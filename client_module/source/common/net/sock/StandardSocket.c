@@ -720,7 +720,6 @@ ssize_t StandardSocket_recvfrom(StandardSocket* this, struct iov_iter* iter, int
 {
    int recvRes;
    //mm_segment_t oldfs;
-   size_t len;
 
    struct sockaddr_in fromSockAddr;
    struct kvec iov;
@@ -734,29 +733,18 @@ ssize_t StandardSocket_recvfrom(StandardSocket* this, struct iov_iter* iter, int
       .msg_namelen      = sizeof(fromSockAddr),
    };
 
-#ifndef KERNEL_HAS_MSGHDR_ITER
-   struct iovec iov = iov_iter_iovec(iter);
-
-   msg.msg_iov       = &iov;
-   msg.msg_iovlen    = 1;
-   len = iov.iov_len;
-#else
-   msg.msg_iter = *iter;
-   len = iter->count;
-#endif // LINUX_VERSION_CODE
 #ifdef set_fs
    ACQUIRE_PROCESS_CONTEXT(oldfs);
 #endif
 
-iov.iov_base = iter->iov->iov_base + iter->iov_offset;
-iov.iov_len = min(iter->count, iter->iov->iov_len - iter->iov_offset);
+   iov.iov_base = iter->iov->iov_base + iter->iov_offset;
+   iov.iov_len = min(iter->count, iter->iov->iov_len - iter->iov_offset);
+   iov_iter_kvec(&msg.msg_iter, READ, &iov, 1, iov.iov_len);
 
-#ifdef KERNEL_HAS_RECVMSG_SIZE
-   recvRes = sock_recvmsg(this->sock, &msg, len, flags);
-#else
-   //recvRes = sock_recvmsg(this->sock, &msg, flags);
-   recvRes = kernel_recvmsg(this->sock, &msg, &iov, 1, iov.iov_len, flags);
-#endif
+   recvRes = sock_recvmsg(this->sock, &msg, flags);
+
+   //printk(KERN_DEBUG "StandardSocket_recvfrom: recvRes=%d\n", recvRes);
+
 #ifdef set_fs
    RELEASE_PROCESS_CONTEXT(oldfs);
 #endif
