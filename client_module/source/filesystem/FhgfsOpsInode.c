@@ -91,6 +91,13 @@ struct dentry* FhgfsOps_lookupIntent(struct inode* parentDir, struct dentry* den
    struct inode* inode = dentry->d_inode;
 
    FhgfsIsizeHints iSizeHints;
+   struct timespec64 now;
+   ktime_get_real_ts64(&now);
+   
+   // For validating the cache, this field is updated
+   // with CURRENT_TIME on first lookup
+
+   dentry->d_time = (now.tv_sec * 1000000000UL + now.tv_nsec);
 
    if(unlikely(Logger_getLogLevel(log) >= Log_SPAM) )
       FhgfsOpsHelper_logOp(Log_SPAM, app, dentry, inode, logContext);
@@ -467,7 +474,7 @@ struct posix_acl* FhgfsOps_get_acl(struct inode* inode, int type)
 
    int refreshRes;
 
-   forget_cached_acl(inode, type);
+   forget_all_cached_acls(inode);
 
    refreshRes = maybeRefreshInode(inode, true, false, false);
    if (refreshRes)
@@ -1137,6 +1144,7 @@ int FhgfsOps_createIntent(struct inode* dir, struct dentry* dentry, int createMo
    // clean-up
 
    LookupIntentInfoOut_uninit(&lookupOutInfo);
+   FileEvent_uninit(&event);
 
    retVal = 0; // success
 
@@ -2593,20 +2601,18 @@ int __FhgfsOps_doRefreshInode(App* app, struct inode* inode, fhgfs_stat* fhgfsSt
    cacheElapsedMS = Time_elapsedMS(&fhgfsInode->dataCacheTime);
    timeoutInvalidate = cacheElapsedMS > Config_getTunePageCacheValidityMS(cfg);
 
-   if(S_ISDIR(inode->i_mode) )
-   {
-      Time_setToNow(&fhgfsInode->dataCacheTime);
-   }
-   else
-   if(mtimeSizeInvalidate || timeoutInvalidate)
+   if( !S_ISDIR(inode->i_mode) && (mtimeSizeInvalidate || timeoutInvalidate))
    { // file contents changed => invalidate non-dirty pages
       spin_unlock(&inode->i_lock); // I _ U N L O C K
       invalidate_remote_inode(inode); // might sleep => unlocked
       spin_lock(&inode->i_lock); // I _ R E L O C K
-
-      Time_setToNow(&fhgfsInode->dataCacheTime); // after invalidate_... to avoid race condition
    }
 
+   // update the dataCacheTime because we've either invalidated the inode, or
+   // we've seen the mtime and size have not changed and the timeout compared to
+   // tunePageCacheBufferMS has not timed out either.  
+
+   Time_setToNow(&fhgfsInode->dataCacheTime); 
    spin_unlock(&inode->i_lock); // I _ U N L O C K
 
 

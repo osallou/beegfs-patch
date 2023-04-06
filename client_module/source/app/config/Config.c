@@ -28,7 +28,7 @@
 #define EVENTLOGMASK_SETATTR "setattr"
 #define EVENTLOGMASK_CLOSE "close"
 #define EVENTLOGMASK_LINK_OP "link-op"
-
+#define EVENTLOGMASK_READ "read"
 
 #define IGNORE_CONFIG_VALUE(compareStr) /* to be used in applyConfigMap() */ \
    if(!strcmp(keyStr, compareStr) ) \
@@ -84,12 +84,15 @@ bool Config_init(Config* this, MountConfig* mountConfig)
    this->connInterfacesFile = NULL;
    this->connNetFilterFile = NULL;
    this->connAuthFile = NULL;
+   this->connMessagingTimeouts = NULL;
+   this->connRDMATimeouts = NULL;
    this->connTcpOnlyFilterFile = NULL;
    this->tunePreferredMetaFile = NULL;
    this->tunePreferredStorageFile = NULL;
    this->tuneFileCacheType = NULL;
    this->sysMgmtdHost = NULL;
    this->sysInodeIDStyle = NULL;
+   this->connInterfacesList = NULL;
 
    return _Config_initConfig(this, mountConfig, true);
 }
@@ -117,11 +120,14 @@ void Config_uninit(Config* this)
    SAFE_KFREE(this->connNetFilterFile);
    SAFE_KFREE(this->connAuthFile);
    SAFE_KFREE(this->connTcpOnlyFilterFile);
+   SAFE_KFREE(this->connMessagingTimeouts);
+   SAFE_KFREE(this->connRDMATimeouts);
    SAFE_KFREE(this->tunePreferredMetaFile);
    SAFE_KFREE(this->tunePreferredStorageFile);
    SAFE_KFREE(this->tuneFileCacheType);
    SAFE_KFREE(this->sysMgmtdHost);
    SAFE_KFREE(this->sysInodeIDStyle);
+   SAFE_KFREE(this->connInterfacesList);
 
    StrCpyMap_uninit(&this->configMap);
 }
@@ -211,6 +217,7 @@ void _Config_loadDefaults(Config* this)
    _Config_configMapRedefine(this, "connUseRDMA",                      "true");
    _Config_configMapRedefine(this, "connMaxInternodeNum",              "8");
    _Config_configMapRedefine(this, "connInterfacesFile",               "");
+   _Config_configMapRedefine(this, "connInterfacesList",              "");
    _Config_configMapRedefine(this, "connFallbackExpirationSecs",       "900");
    _Config_configMapRedefine(this, "connCommRetrySecs",                "600");
    _Config_configMapRedefine(this, "connUnmountRetries",               "true");
@@ -220,7 +227,15 @@ void _Config_loadDefaults(Config* this)
    _Config_configMapRedefine(this, "connNetFilterFile",                "");
    _Config_configMapRedefine(this, "connMaxConcurrentAttempts",        "0");
    _Config_configMapRedefine(this, "connAuthFile",                     "");
+   _Config_configMapRedefine(this, "connDisableAuthentication",        "false");
    _Config_configMapRedefine(this, "connTcpOnlyFilterFile",            "");
+
+   /* connMessagingTimeouts: default to zero, indicating that constants
+    * specified in Common.h are used.
+    */
+   _Config_configMapRedefine(this, "connMessagingTimeouts",            "0,0,0");
+   // connRDMATimeouts: zero values are interpreted as the defaults specified in IBVSocket.c
+   _Config_configMapRedefine(this, "connRDMATimeouts",                 "0,0,0,0,0");
 
    _Config_configMapRedefine(this, "tunePreferredMetaFile",            "");
    _Config_configMapRedefine(this, "tunePreferredStorageFile",         "");
@@ -230,6 +245,7 @@ void _Config_loadDefaults(Config* this)
    _Config_configMapRedefine(this, "tunePageCacheValidityMS",          "2000000000");
    _Config_configMapRedefine(this, "tuneDirSubentryCacheValidityMS",   "1000");
    _Config_configMapRedefine(this, "tuneFileSubentryCacheValidityMS",  "0");
+   _Config_configMapRedefine(this, "tuneENOENTCacheValidityMS",        "0");
    _Config_configMapRedefine(this, "tunePathBufSize",                  "4096");
    _Config_configMapRedefine(this, "tunePathBufNum",                   "8");
    _Config_configMapRedefine(this, "tuneMsgBufSize",                   "65536");
@@ -250,6 +266,7 @@ void _Config_loadDefaults(Config* this)
    _Config_configMapRedefine(this, "sysMountSanityCheckMS",            "11000");
    _Config_configMapRedefine(this, "sysSyncOnClose",                   "false");
    _Config_configMapRedefine(this, "sysSessionCheckOnClose",           "false");
+   _Config_configMapRedefine(this, "sysSessionChecksEnabled",          "true");
 
    _Config_configMapRedefine(this, "sysUpdateTargetStatesSecs",        "30");
    _Config_configMapRedefine(this, "sysTargetOfflineTimeoutSecs",      "900");
@@ -263,6 +280,8 @@ void _Config_loadDefaults(Config* this)
    _Config_configMapRedefine(this, "quotaEnabled",                     "false");
    _Config_configMapRedefine(this, "sysFileEventLogMask",              EVENTLOGMASK_NONE);
    _Config_configMapRedefine(this, "sysRenameEbusyAsXdev",             "false");
+
+   _Config_configMapRedefine(this, "remapConnectionFailureStatus",     "0");
 }
 
 bool _Config_applyConfigMap(Config* this, bool enableException)
@@ -352,6 +371,12 @@ bool _Config_applyConfigMap(Config* this, bool enableException)
          this->connInterfacesFile = StringTk_strDup(valueStr);
       }
       else
+      if(!strcmp(keyStr, "connInterfacesList") )
+      {
+         SAFE_KFREE(this->connInterfacesList);
+         this->connInterfacesList = StringTk_strDup(valueStr);
+      }
+      else
       IGNORE_CONFIG_VALUE("connNonPrimaryExpiration")
       if(!strcmp(keyStr, "connFallbackExpirationSecs") )
          this->connFallbackExpirationSecs = StringTk_strToUInt(valueStr);
@@ -386,10 +411,89 @@ bool _Config_applyConfigMap(Config* this, bool enableException)
          this->connAuthFile = StringTk_strDup(valueStr);
       }
       else
+      if(!strcmp(keyStr, "connDisableAuthentication") )
+         this->connDisableAuthentication = StringTk_strToBool(valueStr);
+      else
       if(!strcmp(keyStr, "connTcpOnlyFilterFile") )
       {
          SAFE_KFREE(this->connTcpOnlyFilterFile);
          this->connTcpOnlyFilterFile = StringTk_strDup(valueStr);
+      }
+      else
+      if(!strcmp(keyStr, "connMessagingTimeouts"))
+      {
+         int cfgValCount = 3; // count value in config file in order of long, medium and short
+
+         StrCpyList connMsgTimeoutList;
+         StrCpyListIter iter;
+
+         SAFE_KFREE(this->connMessagingTimeouts);
+         this->connMessagingTimeouts = StringTk_strDup(valueStr);
+
+         StrCpyList_init(&connMsgTimeoutList);
+         StringTk_explode(valueStr, ',', &connMsgTimeoutList);
+
+         StrCpyListIter_init(&iter, &connMsgTimeoutList);
+
+         if (StrCpyList_length(&connMsgTimeoutList) == cfgValCount)
+         {
+            this->connMsgLongTimeout = StringTk_strToInt(StrCpyListIter_value(&iter)) > 0 ?
+                  StringTk_strToInt(StrCpyListIter_value(&iter)) : CONN_LONG_TIMEOUT;
+            StrCpyListIter_next(&iter);
+
+            this->connMsgMediumTimeout = StringTk_strToInt(StrCpyListIter_value(&iter)) > 0 ?
+                  StringTk_strToInt(StrCpyListIter_value(&iter)) : CONN_MEDIUM_TIMEOUT;
+            StrCpyListIter_next(&iter);
+
+            this->connMsgShortTimeout = StringTk_strToInt(StrCpyListIter_value(&iter)) > 0 ?
+                  StringTk_strToInt(StrCpyListIter_value(&iter)) : CONN_SHORT_TIMEOUT;
+         }
+         else
+         {
+            StrCpyList_uninit(&connMsgTimeoutList);
+            goto bad_config_elem;
+         }
+         StrCpyList_uninit(&connMsgTimeoutList);
+      }
+      else
+      if(!strcmp(keyStr, "connRDMATimeouts"))
+      {
+         StrCpyList connRDMATimeoutList;
+         int* cfgVals[] = {
+            &this->connRDMATimeoutConnect,
+            &this->connRDMATimeoutCompletion,
+            &this->connRDMATimeoutFlowSend,
+            &this->connRDMATimeoutFlowRecv,
+            &this->connRDMATimeoutPoll
+         };
+         bool badVals = false;
+
+         SAFE_KFREE(this->connRDMATimeouts);
+         this->connRDMATimeouts = StringTk_strDup(valueStr);
+
+         StrCpyList_init(&connRDMATimeoutList);
+         StringTk_explode(valueStr, ',', &connRDMATimeoutList);
+
+         if (StrCpyList_length(&connRDMATimeoutList) == sizeof(cfgVals) / sizeof(int*))
+         {
+            StrCpyListIter iter;
+            int idx;
+
+            StrCpyListIter_init(&iter, &connRDMATimeoutList);
+            for (idx = 0; !StrCpyListIter_end(&iter); ++idx, StrCpyListIter_next(&iter))
+            {
+               *cfgVals[idx] = StringTk_strToInt(StrCpyListIter_value(&iter));
+            }
+         }
+         else
+         {
+            badVals = true;
+         }
+
+         StrCpyList_uninit(&connRDMATimeoutList);
+         if (badVals)
+            goto bad_config_elem;
+
       }
       else
       IGNORE_CONFIG_VALUE("debugFindOtherNodes")
@@ -430,6 +534,9 @@ bool _Config_applyConfigMap(Config* this, bool enableException)
       else
       if(!strcmp(keyStr, "tuneFileSubentryCacheValidityMS") )
          this->tuneFileSubentryCacheValidityMS = StringTk_strToUInt(valueStr);
+      else
+      if(!strcmp(keyStr, "tuneENOENTCacheValidityMS") )
+         this->tuneENOENTCacheValidityMS = StringTk_strToUInt(valueStr);
       else
       IGNORE_CONFIG_VALUE("tuneMaxWriteWorks")
       IGNORE_CONFIG_VALUE("tuneMaxReadWorks")
@@ -502,6 +609,9 @@ bool _Config_applyConfigMap(Config* this, bool enableException)
       if(!strcmp(keyStr, "sysSessionCheckOnClose") )
          this->sysSessionCheckOnClose = StringTk_strToBool(valueStr);
       else
+      if(!strcmp(keyStr, "sysSessionChecksEnabled") )
+         this->sysSessionChecksEnabled = StringTk_strToBool(valueStr);
+      else
       if(!strcmp(keyStr, "sysUpdateTargetStatesSecs") )
          this->sysUpdateTargetStatesSecs = StringTk_strToUInt(valueStr);
       else
@@ -554,6 +664,8 @@ bool _Config_applyConfigMap(Config* this, bool enableException)
                   this->eventLogMask |= EventLogMask_CLOSE;
                else if (!strcmp(StrCpyListIter_value(&it), EVENTLOGMASK_LINK_OP))
                   this->eventLogMask |= EventLogMask_LINK_OP;
+               else if (!strcmp(StrCpyListIter_value(&it), EVENTLOGMASK_READ))
+                  this->eventLogMask |= EventLogMask_READ;
                else
                {
                   StrCpyList_uninit(&parts);
@@ -566,6 +678,8 @@ bool _Config_applyConfigMap(Config* this, bool enableException)
             StrCpyList_uninit(&parts);
          }
       }
+      else if(!strcmp(keyStr, "remapConnectionFailureStatus"))
+         this->remapConnectionFailureStatus = StringTk_strToUInt(valueStr);
       else
       { // unknown element occurred
 bad_config_elem:
@@ -662,6 +776,19 @@ void __Config_loadFromMountConfig(Config* this, MountConfig* mountConfig)
    if(mountConfig->tunePreferredStorageFile)
       _Config_configMapRedefine(this, "tunePreferredStorageFile",
          mountConfig->tunePreferredStorageFile);
+
+   if(mountConfig->connInterfacesList)
+   {
+      char* delimiter  = mountConfig->connInterfacesList;
+      size_t listLength;
+      for (listLength = strlen(mountConfig->connInterfacesList); listLength;
+         ++delimiter,--listLength)
+      {
+         if(*delimiter == ' ')
+            *delimiter = ',';
+      }
+      _Config_configMapRedefine(this, "connInterfacesList", mountConfig->connInterfacesList);
+   }
 
    // integer args
 
@@ -1127,6 +1254,11 @@ const char* Config_eventLogMaskToStr(enum EventLogMask mask)
    (mask & EventLogMask_LINK_OP \
     ? ELM_PART_CLOSE(Prefix "," EVENTLOGMASK_LINK_OP) \
     : ELM_PART_CLOSE(Prefix))
+#define ELM_PART_READ(Prefix) \
+   (mask & EventLogMask_READ \
+    ? ELM_PART_LINK_OP(Prefix "," EVENTLOGMASK_READ) \
+    : ELM_PART_LINK_OP(Prefix))
+
 
    if (mask == EventLogMask_NONE)
       return EVENTLOGMASK_NONE;
@@ -1148,10 +1280,18 @@ bool __Config_initConnAuthHash(Config* this, char* connAuthFile, uint64_t* outCo
    ssize_t readRes;
 
 
-   if(!connAuthFile || !StringTk_hasLength(connAuthFile) )
+   if(!connAuthFile || !StringTk_hasLength(connAuthFile))
    {
-      *outConnAuthHash = 0;
-      return true; // no file given => no hash to be generated
+      if (this->connDisableAuthentication)
+      {
+         *outConnAuthHash = 0;
+         return true; // connAuthFile explicitly disabled => no hash to be generated
+      }
+      else
+      {
+         printk_fhgfs(KERN_WARNING, "No connAuthFile configured. Using BeeGFS without connection authentication is considered insecure and is not recommended. If you really want or need to run BeeGFS without connection authentication, please set connDisableAuthentication to true.");
+         return false;
+      }
    }
 
 

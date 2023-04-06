@@ -36,7 +36,10 @@ extern unsigned long RDMASocket_poll(RDMASocket* this, short events, bool finish
 
 // inliners
 static inline void RDMASocket_setBuffers(RDMASocket* this, unsigned bufNum, unsigned bufSize);
+static inline void RDMASocket_setTimeouts(RDMASocket* this, int connectMS,
+   int completionMS, int flowSendMS, int flowRecvMS, int pollMS);
 static inline void RDMASocket_setTypeOfService(RDMASocket* this, int typeOfService);
+static inline void RDMASocket_setConnectionFailureStatus(RDMASocket* this, unsigned value);
 
 struct RDMASocket
 {
@@ -56,12 +59,27 @@ void RDMASocket_setBuffers(RDMASocket* this, unsigned bufNum, unsigned bufSize)
    this->commCfg.bufSize = bufSize;
 }
 
+void RDMASocket_setTimeouts(RDMASocket* this, int connectMS,
+   int completionMS, int flowSendMS, int flowRecvMS, int pollMS)
+{
+   IBVSocket_setTimeouts(&this->ibvsock, connectMS, completionMS, flowSendMS,
+      flowRecvMS, pollMS);
+}
+
 /**
  * Note: Only has an effect for unconnected sockets.
  */
 void RDMASocket_setTypeOfService(RDMASocket* this, int typeOfService)
 {
    IBVSocket_setTypeOfService(&this->ibvsock, typeOfService);
+}
+
+/**
+ * Note: Only has an effect for unconnected sockets.
+ */
+void RDMASocket_setConnectionFailureStatus(RDMASocket* this, unsigned value)
+{
+   IBVSocket_setConnectionFailureStatus(&this->ibvsock, value);
 }
 
 #endif /*OPEN_RDMASOCKET_H_*/

@@ -1,6 +1,6 @@
 #include "IBVSocket.h"
 
-#if defined(CONFIG_INFINIBAND) || defined(CONFIG_INFINIBAND_MODULE)
+#ifdef BEEGFS_RDMA
 
 #ifdef KERNEL_HAS_SCSI_FC_COMPAT
 #include <scsi/fc_compat.h> // some kernels (e.g. rhel 5.9) forgot this in their rdma headers
@@ -8,6 +8,7 @@
 
 
 #include <common/toolkit/TimeTk.h>
+#include <common/toolkit/Time.h>
 
 #include <linux/in.h>
 #include <linux/sched.h>
@@ -18,12 +19,23 @@
 #include <rdma/ib_cm.h>
 
 
-#define IBVSOCKET_CONN_TIMEOUT_MS         5000
-#define IBVSOCKET_COMPLETION_TIMEOUT_MS   300000 /* this also includes send completion wait times */
+#define IBVSOCKET_CONN_TIMEOUT_MS                  5000
+ /* this also includes send completion wait times */
+#define IBVSOCKET_COMPLETION_TIMEOUT_MS          300000
 #define IBVSOCKET_FLOWCONTROL_ONSEND_TIMEOUT_MS  180000
-#define IBVSOCKET_FLOWCONTROL_MSG_LEN                 1
 #define IBVSOCKET_FLOWCONTROL_ONRECV_TIMEOUT_MS  180000
+#define IBVSOCKET_SHUTDOWN_TIMEOUT_MS               250
+#define IBVSOCKET_POLL_TIMEOUT_MS                 10000
+#define IBVSOCKET_FLOWCONTROL_MSG_LEN                 1
 #define IBVSOCKET_STALE_RETRIES_NUM                 128
+/**
+ * IBVSOCKET_RECVT_INFINITE_TIMEOUT_MS is used by IBVSocket_recvT when timeoutMS
+ * is passed as < 0, which indicates that __IBVSocket_receiveCheck should be
+ * called until it does not timeout. Thus, the long timeout value is
+ * inconsequential for that case. There doesn't appear to be any current code
+ * that passes timeoutMS < 0 to IBVSocket_recvT.
+ */
+#define IBVSOCKET_RECVT_INFINITE_TIMEOUT_MS     1000000
 
 #define ibv_print_info(str, ...) printk_fhgfs(KERN_INFO, "%s:%d: " str, __func__, __LINE__, \
    ##__VA_ARGS__)
@@ -62,6 +74,12 @@ bool IBVSocket_init(IBVSocket* _this)
 
    _this->connState = IBVSOCKETCONNSTATE_UNCONNECTED;
 
+   _this->timeoutCfg.connectMS = IBVSOCKET_CONN_TIMEOUT_MS;
+   _this->timeoutCfg.completionMS = IBVSOCKET_COMPLETION_TIMEOUT_MS;
+   _this->timeoutCfg.flowSendMS = IBVSOCKET_FLOWCONTROL_ONSEND_TIMEOUT_MS;
+   _this->timeoutCfg.flowRecvMS = IBVSOCKET_FLOWCONTROL_ONRECV_TIMEOUT_MS;
+   _this->timeoutCfg.pollMS = IBVSOCKET_POLL_TIMEOUT_MS;
+
    _this->typeOfService = 0;
 
    init_waitqueue_head(&_this->eventWaitQ);
@@ -98,6 +116,13 @@ bool __IBVSocket_createNewID(IBVSocket* _this)
 {
    struct rdma_cm_id* new_cm_id;
 
+   // We need to unconditionally destroy the old CM id.  It is unusable at this point.
+   if(_this->cm_id)
+   {
+      rdma_destroy_id(_this->cm_id);
+      _this->cm_id = NULL;
+   }
+
    #if defined(OFED_HAS_NETNS) || defined(rdma_create_id)
       new_cm_id = rdma_create_id(&init_net, __IBVSocket_cmaHandler, _this, RDMA_PS_TCP, IB_QPT_RC);
    #elif defined(OFED_HAS_RDMA_CREATE_QPTYPE)
@@ -112,9 +137,6 @@ bool __IBVSocket_createNewID(IBVSocket* _this)
       return false;
    }
 
-   if(_this->cm_id)
-      rdma_destroy_id(_this->cm_id);
-
    _this->cm_id = new_cm_id;
 
    _this->connState = IBVSOCKETCONNSTATE_UNCONNECTED;
@@ -127,6 +149,8 @@ bool IBVSocket_connectByIP(IBVSocket* _this, struct in_addr* ipaddress, unsigned
    IBVCommConfig* commCfg)
 {
    struct sockaddr_in sin;
+   long connTimeoutJiffies = TimeTk_msToJiffiesSchedulable(IBVSOCKET_CONN_TIMEOUT_MS);
+   Time connElapsed;
 
    /* note: rejected as stale means remote side still had an old open connection associated with
          our current cm_id. what most likely happened is that the client was reset (i.e. no clean
@@ -134,6 +158,7 @@ bool IBVSocket_connectByIP(IBVSocket* _this, struct in_addr* ipaddress, unsigned
          => only possible solution seems to be retrying with another cm_id. */
    int numStaleRetriesLeft = IBVSOCKET_STALE_RETRIES_NUM;
 
+   Time_setToNow(&connElapsed);
 
    for( ; ; ) // stale retry loop
    {
@@ -156,7 +181,7 @@ bool IBVSocket_connectByIP(IBVSocket* _this, struct in_addr* ipaddress, unsigned
       sin.sin_family = AF_INET;
       sin.sin_port = htons(port);
 
-      if(rdma_resolve_addr(_this->cm_id, NULL, (struct sockaddr*)&sin, IBVSOCKET_CONN_TIMEOUT_MS) )
+      if(rdma_resolve_addr(_this->cm_id, NULL, (struct sockaddr*)&sin, _this->timeoutCfg.connectMS) )
       {
          ibv_print_info_debug("rdma_resolve_addr failed\n");
          goto err_invalidateSock;
@@ -168,7 +193,7 @@ bool IBVSocket_connectByIP(IBVSocket* _this, struct in_addr* ipaddress, unsigned
       if(_this->connState != IBVSOCKETCONNSTATE_ADDRESSRESOLVED)
          goto err_invalidateSock;
 
-      if(rdma_resolve_route(_this->cm_id, IBVSOCKET_CONN_TIMEOUT_MS) )
+      if(rdma_resolve_route(_this->cm_id, _this->timeoutCfg.connectMS) )
       {
          ibv_print_info_debug("rdma_resolve_route failed.\n");
          goto err_invalidateSock;
@@ -189,8 +214,15 @@ bool IBVSocket_connectByIP(IBVSocket* _this, struct in_addr* ipaddress, unsigned
       }
 
       // wait for async event
-      wait_event_interruptible(_this->eventWaitQ,
-         _this->connState != IBVSOCKETCONNSTATE_ROUTERESOLVED);
+      // Note: rdma_connect() can take a very long time (>5m) if the peer's HCA has gone down.
+      wait_event_interruptible_timeout(_this->eventWaitQ,
+         _this->connState != IBVSOCKETCONNSTATE_ROUTERESOLVED,
+         connTimeoutJiffies);
+
+      // test point for failed connections
+      if((_this->connState != IBVSOCKETCONNSTATE_ESTABLISHED) &&
+         (_this->remapConnectionFailureStatus != 0))
+            _this->connState = _this->remapConnectionFailureStatus;
 
       // check if cm_id was reported as stale by remote side
       if(_this->connState == IBVSOCKETCONNSTATE_REJECTED_STALE)
@@ -200,14 +232,19 @@ bool IBVSocket_connectByIP(IBVSocket* _this, struct in_addr* ipaddress, unsigned
          if(!numStaleRetriesLeft)
          { // no more stale retries left
             if(IBVSOCKET_STALE_RETRIES_NUM) // did we have any retries at all
-               ibv_print_info("Giving up after %d stale cm_id retries\n",
+               ibv_print_info("Giving up after %d stale connection retries\n",
                   IBVSOCKET_STALE_RETRIES_NUM);
 
             goto err_invalidateSock;
          }
 
-         printk_fhgfs_connerr(KERN_INFO, "Stale cm_id detected. Retrying with a new one...\n");
+         // We need to clean up the commContext created in the routeResolvedHandler because
+         // the next time through the loop it will get recreated.  If this is the final try,
+         // then we don't need it anymore.
+         __IBVSocket_cleanupCommContext(_this->cm_id, _this->commContext);
+         _this->commContext = NULL;
 
+         printk_fhgfs_connerr(KERN_INFO, "Stale connection detected. Retrying with a new one...\n");
          createIDRes = __IBVSocket_createNewID(_this);
          if(!createIDRes)
             goto err_invalidateSock;
@@ -217,14 +254,18 @@ bool IBVSocket_connectByIP(IBVSocket* _this, struct in_addr* ipaddress, unsigned
       }
 
       if(_this->connState != IBVSOCKETCONNSTATE_ESTABLISHED)
+      {
+         ibv_print_info_debug("Failed after %d stale connection retries, elapsed = %u\n",
+            IBVSOCKET_STALE_RETRIES_NUM - numStaleRetriesLeft, Time_elapsedMS(&connElapsed));
          goto err_invalidateSock;
+      }
 
       // connected
 
       if(numStaleRetriesLeft != IBVSOCKET_STALE_RETRIES_NUM)
       {
-         ibv_print_info_debug("Succeeded after %d stale cm_id retries\n",
-            IBVSOCKET_STALE_RETRIES_NUM - numStaleRetriesLeft);
+         ibv_print_info_debug("Succeeded after %d stale connection retries, elapsed = %u\n",
+            IBVSOCKET_STALE_RETRIES_NUM - numStaleRetriesLeft, Time_elapsedMS(&connElapsed));
       }
 
       return true;
@@ -232,8 +273,14 @@ bool IBVSocket_connectByIP(IBVSocket* _this, struct in_addr* ipaddress, unsigned
 
 
 err_invalidateSock:
-   _this->errState = -1;
+   // If we have a comm context, we need to delete it since we can't use it.
+   if (_this->commContext)
+   {
+      __IBVSocket_cleanupCommContext(_this->cm_id, _this->commContext);
+      _this->commContext = NULL;
+   }
 
+   _this->errState = -1;
    return false;
 }
 
@@ -280,7 +327,7 @@ bool IBVSocket_shutdown(IBVSocket* _this)
 
    unsigned numWaitWrites = 0;
    unsigned numWaitReads = 0;
-   int timeoutMS = 250;
+   int timeoutMS = IBVSOCKET_SHUTDOWN_TIMEOUT_MS;
 
    if(_this->errState)
       return true; // true, because the conn is down anyways
@@ -371,7 +418,7 @@ err_fault:
 ssize_t IBVSocket_recvT(IBVSocket* _this, struct iov_iter* iter, int flags, int timeoutMS)
 {
    int checkRes;
-   int wait = timeoutMS < 0 ? 1000*1000 : timeoutMS;
+   int wait = timeoutMS < 0 ? IBVSOCKET_RECVT_INFINITE_TIMEOUT_MS : timeoutMS;
 
    do {
       checkRes = __IBVSocket_receiveCheck(_this, wait);
@@ -405,7 +452,7 @@ ssize_t IBVSocket_send(IBVSocket* _this, struct iov_iter* iter, int flags)
 
    unsigned numWaitWrites = 0;
    unsigned numWaitReads = 0;
-   int timeoutMS = IBVSOCKET_COMPLETION_TIMEOUT_MS;
+   int timeoutMS = _this->timeoutCfg.completionMS;
 
    if(unlikely(_this->errState) )
       return -1;
@@ -443,7 +490,7 @@ ssize_t IBVSocket_send(IBVSocket* _this, struct iov_iter* iter, int flags)
    do
    {
       flowControlRes = __IBVSocket_flowControlOnSendWait(_this,
-         IBVSOCKET_FLOWCONTROL_ONSEND_TIMEOUT_MS);
+         _this->timeoutCfg.flowSendMS);
       if(unlikely(flowControlRes <= 0) )
          goto err_invalidateSock;
 
@@ -492,11 +539,32 @@ err_fault:
 }
 
 
+void IBVSocket_setTimeouts(IBVSocket* _this, int connectMS,
+   int completionMS, int flowSendMS, int flowRecvMS, int pollMS)
+{
+   _this->timeoutCfg.connectMS = connectMS > 0? connectMS : IBVSOCKET_CONN_TIMEOUT_MS;
+   _this->timeoutCfg.completionMS = completionMS > 0? completionMS : IBVSOCKET_COMPLETION_TIMEOUT_MS;
+   _this->timeoutCfg.flowSendMS = flowSendMS > 0? flowSendMS : IBVSOCKET_FLOWCONTROL_ONSEND_TIMEOUT_MS;
+   _this->timeoutCfg.flowRecvMS = flowRecvMS > 0? flowRecvMS : IBVSOCKET_FLOWCONTROL_ONRECV_TIMEOUT_MS;
+   _this->timeoutCfg.pollMS = pollMS > 0? pollMS : IBVSOCKET_POLL_TIMEOUT_MS;
+#ifdef BEEGFS_DEBUG
+   ibv_print_info_debug("connectMS=%d completionMS=%d flowSendMS=%d flowRecvMS=%d pollMS=%d\n",
+      _this->timeoutCfg.connectMS, _this->timeoutCfg.completionMS, _this->timeoutCfg.flowSendMS,
+      _this->timeoutCfg.flowRecvMS, _this->timeoutCfg.pollMS);
+#endif
+}
+
+
 void IBVSocket_setTypeOfService(IBVSocket* _this, int typeOfService)
 {
    _this->typeOfService = typeOfService;
 }
 
+
+void IBVSocket_setConnectionFailureStatus(IBVSocket* _this, unsigned value)
+{
+   _this->remapConnectionFailureStatus = value;
+}
 
 
 bool __IBVSocket_createCommContext(IBVSocket* _this, struct rdma_cm_id* cm_id,
@@ -510,6 +578,7 @@ bool __IBVSocket_createCommContext(IBVSocket* _this, struct rdma_cm_id* cm_id,
    commContext = kzalloc(sizeof(*commContext), GFP_KERNEL);
    if(!commContext)
       goto err_cleanup;
+   ibv_print_info_debug("Alloc CommContext @ %px\n", commContext);
 
    // prepare recv and send event notification
 
@@ -565,7 +634,8 @@ bool __IBVSocket_createCommContext(IBVSocket* _this, struct rdma_cm_id* cm_id,
 
    for(i=0; i < commCfg->bufNum; i++)
    {
-      if(!IBVBuffer_init(&commContext->recvBufs[i], commContext, commCfg->bufSize) )
+      if(!IBVBuffer_init(&commContext->recvBufs[i], commContext, commCfg->bufSize,
+            DMA_FROM_DEVICE) )
       {
          ibv_print_info("couldn't prepare recvBuf #%d\n", i + 1);
          goto err_cleanup;
@@ -581,14 +651,16 @@ bool __IBVSocket_createCommContext(IBVSocket* _this, struct rdma_cm_id* cm_id,
 
    for(i=0; i < commCfg->bufNum; i++)
    {
-      if(!IBVBuffer_init(&commContext->sendBufs[i], commContext, commCfg->bufSize) )
+      if(!IBVBuffer_init(&commContext->sendBufs[i], commContext, commCfg->bufSize,
+            DMA_TO_DEVICE) )
       {
          ibv_print_info("couldn't prepare sendBuf #%d\n", i + 1);
          goto err_cleanup;
       }
    }
 
-   if(!IBVBuffer_init(&commContext->checkConBuffer, commContext, sizeof(u64) ) )
+   if(!IBVBuffer_init(&commContext->checkConBuffer, commContext, sizeof(u64),
+         DMA_FROM_DEVICE) )
    {
       ibv_print_info("couldn't alloc dma control memory region\n");
       goto err_cleanup;
@@ -707,7 +779,7 @@ void __IBVSocket_cleanupCommContext(struct rdma_cm_id* cm_id, IBVCommContext* co
 
 
    if(commContext->sendCQ)
-#ifdef KERNEL_IB_DESTROY_CQ_IS_VOID
+#ifdef OFED_IB_DESTROY_CQ_IS_VOID
       ib_destroy_cq(commContext->sendCQ);
 #else
    {
@@ -721,7 +793,7 @@ void __IBVSocket_cleanupCommContext(struct rdma_cm_id* cm_id, IBVCommContext* co
 #endif
 
    if(commContext->recvCQ)
-#ifdef KERNEL_IB_DESTROY_CQ_IS_VOID
+#ifdef OFED_IB_DESTROY_CQ_IS_VOID
       ib_destroy_cq(commContext->recvCQ);
 #else
    {
@@ -759,6 +831,7 @@ void __IBVSocket_cleanupCommContext(struct rdma_cm_id* cm_id, IBVCommContext* co
 
 cleanup_no_dev:
 
+   ibv_print_info_debug("Free CommContext @ %px\n", commContext);
    kfree(commContext);
 }
 
@@ -874,7 +947,7 @@ int IBVSocket_checkConnection(IBVSocket* _this)
    int postRes;
    int waitRes;
 
-   int timeoutMS = IBVSOCKET_COMPLETION_TIMEOUT_MS;
+   int timeoutMS = _this->timeoutCfg.completionMS;
    unsigned numWaitWrites = 0;
    unsigned numWaitReads = 1;
 
@@ -998,7 +1071,7 @@ int __IBVSocket_recvWC(IBVSocket* _this, int timeoutMS, struct ib_wc* outWC)
 
    // flow control
 
-   if(unlikely(__IBVSocket_flowControlOnRecv(_this, IBVSOCKET_FLOWCONTROL_ONRECV_TIMEOUT_MS) ) )
+   if(unlikely(__IBVSocket_flowControlOnRecv(_this, _this->timeoutCfg.flowRecvMS) ) )
    {
       ibv_print_info_debug("got an error from flowControlOnRecv().\n");
       return -1;
@@ -1168,7 +1241,7 @@ int __IBVSocket_waitForRecvCompletionEvent(IBVSocket* _this, int timeoutMS, stru
       /* note: we use pollTimeoutMS to check the conn every few secs (otherwise we might
          wait for a very long time in case the other side disconnected silently) */
 
-      int pollTimeoutMS = MIN(10000, timeoutMS);
+      int pollTimeoutMS = MIN(_this->timeoutCfg.pollMS, timeoutMS);
       long pollTimeoutJiffies = TimeTk_msToJiffiesSchedulable(pollTimeoutMS);
 
       /* note: don't think about ib_peek_cq here, because it is not implemented in the drivers. */
@@ -1214,7 +1287,7 @@ int __IBVSocket_waitForSendCompletionEvent(IBVSocket* _this, int oldSendCount, i
    {
       // Note: We use pollTimeoutMS to check the conn every few secs (otherwise we might
       //    wait for a very long time in case the other side disconnected silently)
-      int pollTimeoutMS = MIN(10000, timeoutMS);
+      int pollTimeoutMS = MIN(_this->timeoutCfg.pollMS, timeoutMS);
       long pollTimeoutJiffies = TimeTk_msToJiffiesSchedulable(pollTimeoutMS);
 
       waitRes = wait_event_timeout(commContext->sendCompWaitQ,
@@ -1649,7 +1722,11 @@ int __IBVSocket_cmaHandler(struct rdma_cm_id* cm_id, struct rdma_cm_event* event
 
       case RDMA_CM_EVENT_CONNECT_REQUEST:
          // incoming connections not supported => reject all
-         rdma_reject(cm_id, NULL, 0, IB_CM_REJ_CONSUMER_DEFINED);
+         #ifdef OFED_RDMA_REJECT_NEEDS_REASON
+            rdma_reject(cm_id, NULL, 0, IB_CM_REJ_CONSUMER_DEFINED);
+         #else
+            rdma_reject(cm_id, NULL, 0);
+         #endif // OFED_RDMA_REJECT_NEEDS_REASON
          break;
 
       case RDMA_CM_EVENT_CONNECT_RESPONSE:
@@ -1840,7 +1917,7 @@ struct ib_cq* __IBVSocket_createCompletionQueue(struct ib_device* device,
    #elif defined OFED_HAS_IB_CREATE_CQATTR || defined ib_create_cq
       struct ib_cq_init_attr attrs = {
          .cqe = cqe,
-         .comp_vector = 0,
+         .comp_vector = get_random_int()%device->num_comp_vectors,
       };
 
       return ib_create_cq(device, comp_handler, event_handler, cq_context, &attrs);

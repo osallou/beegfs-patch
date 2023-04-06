@@ -38,6 +38,8 @@ const char* const PROCFSHELPER_CONFIGKEYS[] =
    "connMaxInternodeNum",
    "connInterfacesFile",
    "connNetFilterFile",
+   "connAuthFile",
+   "connDisableAuthentication",
    "connTcpOnlyFilterFile",
    "connFallbackExpirationSecs",
    "connRDMABufSize",
@@ -45,6 +47,8 @@ const char* const PROCFSHELPER_CONFIGKEYS[] =
    "connCommRetrySecs",
    "connNumCommRetries",
    "connUnmountRetries",
+   "connMessagingTimeouts",
+   "connRDMATimeouts",
    "tunePreferredMetaFile",
    "tunePreferredStorageFile",
    "tuneFileCacheType",
@@ -66,6 +70,7 @@ const char* const PROCFSHELPER_CONFIGKEYS[] =
    "sysMountSanityCheckMS",
    "sysSyncOnClose",
    "sysSessionCheckOnClose",
+   "sysSessionChecksEnabled",
    "sysXAttrsEnabled",
    "quotaEnabled",
    "sysFileEventLogMask",
@@ -101,6 +106,9 @@ int ProcFsHelper_readV2_config(struct seq_file* file, App* app)
    seq_printf(file, "connMaxInternodeNum = %u\n", Config_getConnMaxInternodeNum(cfg) );
    seq_printf(file, "connInterfacesFile = %s\n", Config_getConnInterfacesFile(cfg) );
    seq_printf(file, "connNetFilterFile = %s\n", Config_getConnNetFilterFile(cfg) );
+   seq_printf(file, "connAuthFile = %s\n", Config_getConnAuthFile(cfg) );
+   seq_printf(file, "connDisableAuthentication = %s\n",
+      Config_getConnDisableAuthentication(cfg) ? "true" : "false");
    seq_printf(file, "connTcpOnlyFilterFile = %s\n", Config_getConnTcpOnlyFilterFile(cfg) );
    seq_printf(file, "connFallbackExpirationSecs = %u\n",
       Config_getConnFallbackExpirationSecs(cfg) );
@@ -109,6 +117,8 @@ int ProcFsHelper_readV2_config(struct seq_file* file, App* app)
    seq_printf(file, "connCommRetrySecs = %u\n", Config_getConnCommRetrySecs(cfg) );
    seq_printf(file, "connNumCommRetries = %u\n", Config_getConnNumCommRetries(cfg) );
    seq_printf(file, "connUnmountRetries = %d\n", (int)Config_getConnUnmountRetries(cfg) );
+   seq_printf(file, "connMessagingTimeouts = %s\n", Config_getConnMessagingTimeouts(cfg) );
+   seq_printf(file, "connRDMATimeouts = %s\n", Config_getConnRDMATimeouts(cfg) );
    seq_printf(file, "tunePreferredMetaFile = %s\n", Config_getTunePreferredMetaFile(cfg) );
    seq_printf(file, "tunePreferredStorageFile = %s\n", Config_getTunePreferredStorageFile(cfg) );
    seq_printf(file, "tuneFileCacheType = %s\n",
@@ -135,6 +145,7 @@ int ProcFsHelper_readV2_config(struct seq_file* file, App* app)
    seq_printf(file, "sysSyncOnClose = %d\n", (int)Config_getSysSyncOnClose(cfg) );
    seq_printf(file, "sysXAttrsEnabled = %d\n", (int)Config_getSysXAttrsEnabled(cfg) );
    seq_printf(file, "sysSessionCheckOnClose = %d\n", (int)Config_getSysSessionCheckOnClose(cfg) );
+   seq_printf(file, "sysSessionChecksEnabled = %d\n", (int)Config_getSysSessionChecksEnabled(cfg) );
    seq_printf(file, "quotaEnabled = %d\n", (int)Config_getQuotaEnabled(cfg) );
    seq_printf(file, "sysFileEventLogMask = %s\n", Config_eventLogMaskToStr(cfg->eventLogMask));
    seq_printf(file, "sysRenameEbusyAsXdev = %u\n", (unsigned) cfg->sysRenameEbusyAsXdev);
@@ -320,6 +331,10 @@ int ProcFsHelper_read_config(char* buf, char** start, off_t offset, int size, in
    if(!strcmp(currentKey, "sysSessionCheckOnClose") )
       count = scnprintf(buf, size, "%s = %u\n", currentKey,
          Config_getSysSessionCheckOnClose(cfg) );
+   else
+   if(!strcmp(currentKey, "sysSessionChecksEnabled") )
+      count = scnprintf(buf, size, "%s = %u\n", currentKey,
+         Config_getSysSessionChecksEnabled(cfg) );
    else
    if(!strcmp(currentKey, "sysXAttrsEnabled") )
       count = scnprintf(buf, size, "%s = %d\n", currentKey, Config_getSysXAttrsEnabled(cfg) );
@@ -880,6 +895,51 @@ int ProcFsHelper_write_connRetriesEnabled(const char __user *buf, unsigned long 
 
    retriesEnabled = StringTk_strToBool(trimCopy);
    App_setConnRetriesEnabled(app, retriesEnabled);
+
+   retVal = count;
+
+   kfree(trimCopy);
+
+out_fault:
+   kfree(kernelBuf);
+
+   return retVal;
+}
+
+int ProcFsHelper_read_remapConnectionFailure(struct seq_file* file, App* app)
+{
+   Config* cfg = App_getConfig(app);
+   unsigned remapConnectionFailure = Config_getRemapConnectionFailureStatus(cfg);
+
+   seq_printf(file, "%d\n", remapConnectionFailure);
+
+   return 0;
+}
+
+int ProcFsHelper_write_remapConnectionFailure(const char __user *buf, unsigned long count, App* app)
+{
+   int retVal;
+   long copyVal;
+   Config* cfg = App_getConfig(app);
+
+   char* kernelBuf;
+   char* trimCopy;
+   unsigned remapConnectionFailure;
+
+   kernelBuf = os_kmalloc(count+1); // +1 for zero-term
+   kernelBuf[count] = 0;
+
+   copyVal = __copy_from_user(kernelBuf, buf, count);
+   if (copyVal != 0)
+   {
+      retVal = -EFAULT;
+      goto out_fault;
+   }
+
+   trimCopy = StringTk_trimCopy(kernelBuf);
+
+   remapConnectionFailure = StringTk_strToInt(trimCopy);
+   Config_setRemapConnectionFailureStatus(cfg, remapConnectionFailure);
 
    retVal = count;
 

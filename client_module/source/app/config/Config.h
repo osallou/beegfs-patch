@@ -30,6 +30,7 @@ enum EventLogMask
    EventLogMask_SETATTR = 4,
    EventLogMask_CLOSE = 8,
    EventLogMask_LINK_OP = 16,
+   EventLogMask_READ = 32,
 };
 
 
@@ -80,6 +81,7 @@ static inline int Config_getConnHelperdPortTCP(Config* this);
 static inline int Config_getConnMgmtdPortTCP(Config* this);
 static inline unsigned Config_getConnMaxInternodeNum(Config* this);
 static inline char* Config_getConnInterfacesFile(Config* this);
+static inline char* Config_getConnInterfacesList(Config* this);
 static inline unsigned Config_getConnFallbackExpirationSecs(Config* this);
 static inline unsigned Config_getConnNumCommRetries(Config* this);
 static inline unsigned Config_getConnCommRetrySecs(Config* this);
@@ -87,8 +89,12 @@ static inline bool Config_getConnUnmountRetries(Config* this);
 static inline unsigned Config_getConnRDMABufSize(Config* this);
 static inline unsigned Config_getConnRDMABufNum(Config* this);
 static inline int Config_getConnRDMATypeOfService(Config* this);
+static inline unsigned Config_getRemapConnectionFailureStatus(Config* this);
+static inline void Config_setRemapConnectionFailureStatus(Config* this, unsigned status);
 static inline char* Config_getConnNetFilterFile(Config* this);
 static inline unsigned Config_getConnMaxConcurrentAttempts(Config* this);
+static inline char* Config_getConnAuthFile(Config* this);
+static inline bool Config_getConnDisableAuthentication(Config* this);
 static inline uint64_t Config_getConnAuthHash(Config* this);
 static inline char* Config_getConnTcpOnlyFilterFile(Config* this);
 static inline char* Config_getTunePreferredMetaFile(Config* this);
@@ -104,6 +110,7 @@ static inline int Config_getTuneMsgBufNum(Config* this);
 static inline unsigned Config_getTunePageCacheValidityMS(Config* this);
 static inline unsigned Config_getTuneDirSubentryCacheValidityMS(Config* this);
 static inline unsigned Config_getTuneFileSubentryCacheValidityMS(Config* this);
+static inline unsigned Config_getTuneENOENTCacheValidityMS(Config* this);
 static inline bool Config_getTuneRemoteFSync(Config* this);
 static inline bool Config_getTuneUseGlobalFileLocks(Config* this);
 static inline bool Config_getTuneRefreshOnGetAttr(Config* this);
@@ -123,6 +130,7 @@ static inline bool Config_getSysCreateHardlinksAsSymlinks(Config* this);
 static inline unsigned Config_getSysMountSanityCheckMS(Config* this);
 static inline bool Config_getSysSyncOnClose(Config* this);
 static inline bool Config_getSysSessionCheckOnClose(Config* this);
+static inline bool Config_getSysSessionChecksEnabled(Config* this);
 static inline unsigned Config_getSysUpdateTargetStatesSecs(Config* this);
 static inline unsigned Config_getSysTargetOfflineTimeoutSecs(Config* this);
 static inline bool Config_getSysXAttrsEnabled(Config* this);
@@ -130,6 +138,13 @@ static inline bool Config_getSysACLsEnabled(Config* this);
 static inline bool Config_getSysXAttrsImplicitlyEnabled(Config* this);
 
 static inline bool Config_getQuotaEnabled(Config* this);
+static inline char* Config_getConnMessagingTimeouts(Config* this);
+static inline char* Config_getConnRDMATimeouts(Config* this);
+static inline int Config_getConnRDMATimeoutConnect(Config* this);
+static inline int Config_getConnRDMATimeoutCompletion(Config* this);
+static inline int Config_getConnRDMATimeoutFlowSend(Config* this);
+static inline int Config_getConnRDMATimeoutFlowRecv(Config* this);
+static inline int Config_getConnRDMATimeoutPoll(Config* this);
 
 
 enum FileCacheType
@@ -175,6 +190,7 @@ struct Config
    bool     connUseRDMA;
    unsigned       connMaxInternodeNum;
    char*          connInterfacesFile;
+   char*          connInterfacesList;
    unsigned       connFallbackExpirationSecs;
    unsigned       connNumCommRetries; // auto-computed from connCommRetrySecs
    unsigned       connCommRetrySecs;
@@ -185,8 +201,24 @@ struct Config
    char*          connNetFilterFile; // allowed IP addresses (all IPs allowed, if empty)
    unsigned       connMaxConcurrentAttempts;
    char*          connAuthFile;
+   bool           connDisableAuthentication;
    uint64_t       connAuthHash; // implicitly set based on hash of connAuthFile contents
    char*          connTcpOnlyFilterFile; // allow only plain TCP (no RDMA etc) to these IPs
+
+   char*          connMessagingTimeouts;
+   int            connMsgLongTimeout;
+   int            connMsgMediumTimeout;
+   int            connMsgShortTimeout; // connection (response) timeouts in ms
+                                       // note: be careful here, because servers not
+                                       // responding for >30secs under high load is nothing
+                                       // unusual, so never use connMsgShortTimeout for
+                                       // IO-related operations.
+   char*          connRDMATimeouts;
+   int            connRDMATimeoutConnect;
+   int            connRDMATimeoutCompletion;
+   int            connRDMATimeoutFlowSend;
+   int            connRDMATimeoutFlowRecv;
+   int            connRDMATimeoutPoll;
 
    char*          tunePreferredMetaFile;
    char*          tunePreferredStorageFile;
@@ -197,6 +229,7 @@ struct Config
    unsigned       tunePageCacheValidityMS;
    unsigned       tuneDirSubentryCacheValidityMS;
    unsigned       tuneFileSubentryCacheValidityMS;
+   unsigned       tuneENOENTCacheValidityMS;
    int            tunePathBufSize;
    int            tunePathBufNum;
    int            tuneMsgBufSize;
@@ -219,6 +252,7 @@ struct Config
    unsigned       sysMountSanityCheckMS;
    bool     sysSyncOnClose;
    bool     sysSessionCheckOnClose;
+   bool     sysSessionChecksEnabled;
    unsigned       sysUpdateTargetStatesSecs;
    unsigned       sysTargetOfflineTimeoutSecs;
 
@@ -238,6 +272,9 @@ struct Config
 
    // internals
    StrCpyMap configMap;
+
+   // testing
+   unsigned  remapConnectionFailureStatus;
 };
 
 char* Config_getCfgFile(Config* this)
@@ -309,6 +346,11 @@ char* Config_getConnInterfacesFile(Config* this)
    return this->connInterfacesFile;
 }
 
+char* Config_getConnInterfacesList(Config* this)
+{
+   return this->connInterfacesList;
+}
+
 unsigned Config_getConnFallbackExpirationSecs(Config* this)
 {
    return this->connFallbackExpirationSecs;
@@ -344,6 +386,16 @@ int Config_getConnRDMATypeOfService(Config* this)
    return this->connRDMATypeOfService;
 }
 
+unsigned Config_getRemapConnectionFailureStatus(Config* this)
+{
+   return this->remapConnectionFailureStatus;
+}
+
+void Config_setRemapConnectionFailureStatus(Config* this, unsigned status)
+{
+   this->remapConnectionFailureStatus = status;
+}
+
 char* Config_getConnNetFilterFile(Config* this)
 {
    return this->connNetFilterFile;
@@ -352,6 +404,16 @@ char* Config_getConnNetFilterFile(Config* this)
 unsigned Config_getConnMaxConcurrentAttempts(Config* this)
 {
    return this->connMaxConcurrentAttempts;
+}
+
+char* Config_getConnAuthFile(Config* this)
+{
+   return this->connAuthFile;
+}
+
+bool Config_getConnDisableAuthentication(Config* this)
+{
+   return this->connDisableAuthentication;
 }
 
 uint64_t Config_getConnAuthHash(Config* this)
@@ -427,6 +489,11 @@ unsigned Config_getTuneDirSubentryCacheValidityMS(Config* this)
 unsigned Config_getTuneFileSubentryCacheValidityMS(Config* this)
 {
    return this->tuneFileSubentryCacheValidityMS;
+}
+
+unsigned Config_getTuneENOENTCacheValidityMS(Config* this)
+{
+   return this->tuneENOENTCacheValidityMS;
 }
 
 bool Config_getTuneRemoteFSync(Config* this)
@@ -529,6 +596,11 @@ bool Config_getSysSessionCheckOnClose(Config* this)
    return this->sysSessionCheckOnClose;
 }
 
+bool Config_getSysSessionChecksEnabled(Config* this)
+{
+   return this->sysSessionChecksEnabled;
+}
+
 unsigned Config_getSysUpdateTargetStatesSecs(Config* this)
 {
    return this->sysUpdateTargetStatesSecs;
@@ -557,6 +629,41 @@ bool Config_getSysXAttrsImplicitlyEnabled(Config* this)
 bool Config_getQuotaEnabled(Config* this)
 {
    return this->quotaEnabled;
+}
+
+char* Config_getConnMessagingTimeouts(Config* this)
+{
+   return this->connMessagingTimeouts;
+}
+
+char* Config_getConnRDMATimeouts(Config* this)
+{
+   return this->connRDMATimeouts;
+}
+
+int Config_getConnRDMATimeoutConnect(Config* this)
+{
+   return this->connRDMATimeoutConnect;
+}
+
+int Config_getConnRDMATimeoutCompletion(Config* this)
+{
+   return this->connRDMATimeoutCompletion;
+}
+
+int Config_getConnRDMATimeoutFlowSend(Config* this)
+{
+   return this->connRDMATimeoutFlowSend;
+}
+
+int Config_getConnRDMATimeoutFlowRecv(Config* this)
+{
+   return this->connRDMATimeoutFlowRecv;
+}
+
+int Config_getConnRDMATimeoutPoll(Config* this)
+{
+   return this->connRDMATimeoutPoll;
 }
 
 #endif /*CONFIG_H_*/

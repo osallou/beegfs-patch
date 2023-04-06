@@ -12,7 +12,7 @@
 #include <linux/vmalloc.h>
 #include <linux/errno.h>
 #include <linux/slab.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <stdarg.h>
 #include <linux/types.h>
 #include <linux/stddef.h>
@@ -27,11 +27,10 @@
 #include <common/FhgfsTypes.h>
 #include <os/OsDeps.h>
 
-
 /**
- * connection (response) timeouts in ms
- * note: be careful here, because servers not responding for >30secs under high load is nothing
- * unusual, so never use CONN_SHORT_TIMEOUT for IO-related operations.
+ * NOTE: These timeouts can now be overridden by the connMessagingTimeouts
+ * option in the configuration file. If that option is unset or set to <=0, we
+ * still default to these constants.
  */
 #define CONN_LONG_TIMEOUT     600000
 #define CONN_MEDIUM_TIMEOUT    90000
@@ -191,6 +190,13 @@ static inline struct timespec current_fs_time(struct inode *sb)
 
 #ifndef swap
    #define swap(a, b) do { typeof(a) __tmp = (a); (a) = (b); (b) = __tmp; } while (0)
+#endif
+
+#undef BEEGFS_RDMA
+#ifndef BEEGFS_NO_RDMA
+#if defined(CONFIG_INFINIBAND) || defined(CONFIG_INFINIBAND_MODULE)
+#define BEEGFS_RDMA 1
+#endif
 #endif
 
 static inline unsigned FhgfsCommon_getCurrentUserID(void);

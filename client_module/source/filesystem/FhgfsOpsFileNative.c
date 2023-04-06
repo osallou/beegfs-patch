@@ -631,7 +631,7 @@ static ssize_t beegfs_write_iter(struct kiocb* iocb, struct iov_iter* from)
       loff_t pos = iocb->ki_pos;
       struct inode* inode = file_inode(filp);
 
-      mutex_lock(&inode->i_mutex);
+      os_inode_lock(inode);
       do {
          result = os_generic_write_checks(filp, &pos, &size, S_ISBLK(inode->i_mode) );
          if(result)
@@ -671,7 +671,7 @@ static ssize_t beegfs_write_iter(struct kiocb* iocb, struct iov_iter* from)
          result = generic_file_direct_write(iocb, from, pos);
 #endif
       } while(0);
-      mutex_unlock(&inode->i_mutex);
+      os_inode_unlock(inode);
 #endif
 
       return result;
@@ -1038,7 +1038,7 @@ static void* __writepages_pool_alloc(gfp_t mask, void* pool_data)
    return state;
 
 fail_iov:
-   kfree(state->iov);
+   kfree(state->pages);
 fail_pages:
    kfree(state);
 fail_state:
@@ -2046,48 +2046,34 @@ static ssize_t beegfs_dIO_read(struct kiocb* iocb, struct iov_iter* iter, loff_t
 
    App* app = FhgfsOps_getApp(dentry->d_sb);
 
-   struct iov_iter loopIter;
-   struct iovec iov;
-
-   ssize_t readRes = 0;
    ssize_t result = 0;
 
    FhgfsOpsHelper_logOpDebug(app, dentry, inode, __func__, "pos: %lld, nr_segs: %lld",
       offset, iter->nr_segs);
    IGNORE_UNUSED_VARIABLE(app);
 
-   iov_for_each(iov, loopIter, *iter)
+   result = FhgfsOpsRemoting_readfileVec(iter, offset, ioInfo, BEEGFS_INODE(inode));
+
+   if(result < 0)
+      return FhgfsOpsErr_toSysErr(-result);
+
+   iov_iter_advance(iter, result);
+   offset += result;
+
+   if(iter->count > 0)
    {
-      readRes = FhgfsOpsRemoting_readfile(iov.iov_base, iov.iov_len, offset, ioInfo,
-         BEEGFS_INODE(inode) );
-      if(readRes < 0)
-         break;
-
-      if(readRes < iov.iov_len)
-      {
-         result += readRes;
-         offset += readRes;
-         readRes = __FhgfsOps_readSparse(filp, iov.iov_base + readRes, iov.iov_len - readRes,
-            offset + readRes);
-
-         if(readRes < 0)
-            break;
-      }
+      ssize_t readRes = __FhgfsOps_readSparse(filp, iter->iov->iov_base + offset + result, iter->count,
+         offset + result);
 
       result += readRes;
-      offset += readRes;
 
-      if(readRes < iov.iov_len)
-         break;
+      iov_iter_advance(iter, readRes);
    }
 
    task_io_account_read(result);
 
    if(offset > i_size_read(inode) )
       i_size_write(inode, offset);
-
-   if(result == 0)
-      return FhgfsOpsErr_toSysErr(-readRes);
 
    return result;
 }
@@ -2101,10 +2087,6 @@ static ssize_t beegfs_dIO_write(struct kiocb* iocb, struct iov_iter* iter, loff_
 
    App* app = FhgfsOps_getApp(dentry->d_sb);
 
-   struct iov_iter loopIter;
-   struct iovec iov;
-
-   ssize_t writeRes = 0;
    ssize_t result = 0;
 
    FhgfsOpsHelper_logOpDebug(app, dentry, inode, __func__, "pos: %lld, nr_segs: %lld",
@@ -2112,22 +2094,16 @@ static ssize_t beegfs_dIO_write(struct kiocb* iocb, struct iov_iter* iter, loff_
    IGNORE_UNUSED_VARIABLE(app);
    IGNORE_UNUSED_VARIABLE(inode);
 
-   iov_for_each(iov, loopIter, *iter)
-   {
-      writeRes = FhgfsOpsRemoting_writefile(iov.iov_base, iov.iov_len, offset, ioInfo);
-      if(writeRes < 0)
-         break;
+   result = FhgfsOpsRemoting_writefileVec(iter, offset, ioInfo, false);
 
-      result += writeRes;
-      offset += writeRes;
-      if( (size_t) writeRes < iov.iov_len)
-         break;
-   }
+   if(result < 0)
+      return FhgfsOpsErr_toSysErr(-result);
+
+   iov_iter_advance(iter, result);
+
+   offset += result;
 
    task_io_account_write(result);
-
-   if(result == 0)
-      return FhgfsOpsErr_toSysErr(-writeRes);
 
    return result;
 }
